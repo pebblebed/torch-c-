@@ -30,3 +30,8 @@
 *.exe
 *.out
 *.app
+
+# libtorch/CMake-isms
+libtorch
+libtorch*.zip
+build/*
