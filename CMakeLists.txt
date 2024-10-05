@@ -4,7 +4,7 @@ project(diffusion3d-c++)
 find_package(Torch REQUIRED)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
 
-add_executable(trainium "trainium.cpp")
+add_executable(trainium "trainium.cpp" "dataset_dir.cpp")
 target_link_libraries(trainium "${TORCH_LIBRARIES}")
 set_property(TARGET trainium PROPERTY CXX_STANDARD 17)
 
