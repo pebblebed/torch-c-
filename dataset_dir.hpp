@@ -1,6 +1,7 @@
 #pragma once
 
 #include <torch/torch.h>
+#include <tuple>
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/mman.h>
@@ -88,5 +89,40 @@ private:
     size_t batch_size;
     size_t n_ctx;
 };
+
+class SubsetDataset: public torch::data::Dataset<SubsetDataset> {
+public:
+    SubsetDataset(DatasetDir& parent, int start_idx, int end_idx)
+    : parent(parent)
+    , start(start_idx)
+    , finish(end_idx) { }
+
+    Example get(size_t index) override;
+    torch::optional<size_t> size() const override {
+        return finish - start;
+    }
+private:
+    DatasetDir& parent;
+    int start;
+    int finish;
+};
+
+static inline
+std::tuple<SubsetDataset, SubsetDataset, SubsetDataset>
+train_test_val_split(DatasetDir& parent, float test_pct=0.1, float val_pct=0.1) {
+    auto train_pct = 1.0 - (test_pct + val_pct);
+    size_t train_end = parent.size().value_or(0) * train_pct;
+    auto train = SubsetDataset(parent, 0, train_end);
+
+    // No overlap here; train_end is not part of the train set.
+    size_t val_start = train_end;
+    size_t val_end = val_start + parent.size().value_or(0) * val_pct;
+    auto val = SubsetDataset(parent, val_start, val_end);
+
+    size_t test_start = val_end;
+    size_t test_end = test_start + parent.size().value_or(0) * test_pct;
+    auto test = SubsetDataset(parent, test_start, test_end);
+    return std::make_tuple(train, test, val);
+}
 
 }

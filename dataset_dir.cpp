@@ -71,13 +71,19 @@ void DatasetDir::traverse(const std::string& path) {
     }
 }
 
-torch::data::Example<> DatasetDir::get(size_t index) {
+Example DatasetDir::get(size_t index) {
     auto &file = files[dumb_hash(index) % files.size()];
     return file.get(index);
 }
 
 torch::optional<size_t> DatasetDir::size() const {
     return total_size;
+}
+
+
+Example SubsetDataset::get(size_t index) {
+    index = (index + start) % (finish - start);
+    return parent.get(start + index);
 }
 
 }

@@ -82,9 +82,13 @@ template <int NEmbeddings, int Dim, int NHeads, int NLayers>
 class CharFormer {
     nn::Embedding emb;
     nn::Sequential seq;
+    nn::Linear head;
+    nn::Softmax probs;
 public:
     CharFormer()
     : emb(NEmbeddings, Dim)
+    , head(Dim, NEmbeddings)
+    , probs(nn::SoftmaxOptions(1))
     {
         for (auto i = 0; i < NLayers; i++) {
             seq->push_back(nn::TransformerEncoderLayer(Dim, NHeads));
@@ -92,7 +96,9 @@ public:
     }
 
     torch::Tensor forward(torch::Tensor x) {
-        return seq->forward(emb->forward(x));
+        auto z = seq->forward(emb->forward(x));
+        z = head->forward(z);
+        return probs->forward(z);
     }
 
     torch::Tensor forward(std::string s) {
