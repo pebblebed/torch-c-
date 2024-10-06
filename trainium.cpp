@@ -25,19 +25,29 @@ int main(int argc, char** argv) {
     std::string dataset_dir = argv[1];
     auto dataset = DatasetDir(dataset_dir, B, L);
     auto net = CharFormer<256, 128, 8, 12>();
+    net.to(torch::kCUDA);
 
     auto train_test_val = train_test_val_split(dataset, 0.8, 0.1);
     auto &train = std::get<0>(train_test_val);
     auto &test = std::get<1>(train_test_val);
     auto &val = std::get<2>(train_test_val);
 
-    std::cout << net.forward("hello") << "\n";
     auto dataloader = torch::data::make_data_loader(train.map(torch::data::transforms::Stack<>()),
         torch::data::samplers::SequentialSampler(train.size().value()),
         torch::data::DataLoaderOptions().batch_size(B));
+    torch::optim::AdamW optimizer(net.parameters(), 0.1e-3);
+    size_t i = 0;
     for (auto& batch : *dataloader) {
-        std::cout << net.forward(batch.data) << "\n";
-        // XXX: loss and stuff!
+        batch.data.to(torch::kCUDA);
+        batch.target.to(torch::kCUDA);
+        optimizer.zero_grad();
+        auto probs = net.forward(batch.data);
+        auto loss = torch::nll_loss(torch::log(probs), batch.target);
+        loss.backward();
+        optimizer.step();
+        if (i++ % 100 == 0) {
+            std::cout << loss.item<float>() << "\n";
+        }
     }
     return 0;
 }

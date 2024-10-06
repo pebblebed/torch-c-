@@ -79,7 +79,7 @@ public:
 };
 
 template <int NEmbeddings, int Dim, int NHeads, int NLayers>
-class CharFormer {
+class CharFormer : public nn::Module {
     nn::Embedding emb;
     nn::Sequential seq;
     nn::Linear head;
@@ -93,12 +93,20 @@ public:
         for (auto i = 0; i < NLayers; i++) {
             seq->push_back(nn::TransformerEncoderLayer(Dim, NHeads));
         }
+        seq->push_back(head);
+        seq->push_back(probs);
     }
 
     torch::Tensor forward(torch::Tensor x) {
+        assert(x.dim() == 4); // B, L, H, D
+        assert(x.size(3) == Dim);
+        assert(x.size(2) == NHeads);
         auto z = seq->forward(emb->forward(x));
-        z = head->forward(z);
-        return probs->forward(z);
+        assert(z.dim() == 3); // B, L, E
+        assert(z.size(2) == NEmbeddings);
+        assert(z.size(1) == x.size(1));
+        assert(z.size(0) == x.size(0));
+        return torch::log_softmax(head->forward(z), 1);
     }
 
     torch::Tensor forward(std::string s) {

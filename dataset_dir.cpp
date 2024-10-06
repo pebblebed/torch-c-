@@ -23,7 +23,7 @@ const torch::Tensor make_tensor(const uint8_t* data, size_t size) {
         at::IntArrayRef(shape),
         at::IntArrayRef(strides),
         [](void*){},
-        options);
+        options).to(torch::kInt32);
 }
 
 static inline uint64_t dumb_hash(uint64_t input) {
