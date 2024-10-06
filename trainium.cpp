@@ -1,6 +1,7 @@
 #include <iostream>
 #include "charformer.hpp"
 #include "dataset_dir.hpp"
+#include "util.hpp"
 
 using namespace trainium;
 
@@ -40,6 +41,12 @@ int main(int argc, char** argv) {
     for (auto& batch : *dataloader) {
         batch.data.to(torch::kCUDA);
         batch.target.to(torch::kCUDA);
+        dd(batch.data);
+        dd(batch.target);
+        printf("batch.data.dims(): %zu\n", batch.data.dim());
+        for (int i = 0; i < batch.data.dim(); i++) {
+            printf("batch.data.size(%d): %zu\n", i, batch.data.size(i));
+        }
         optimizer.zero_grad();
         auto probs = net.forward(batch.data);
         auto loss = torch::nll_loss(torch::log(probs), batch.target);
