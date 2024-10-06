@@ -1,3 +1,5 @@
+#pragma once
+#include <cassert>
 #include <torch/torch.h>
 
 namespace trainium {
@@ -88,8 +90,10 @@ torch::Tensor positional_encoding(int64_t seq_length, int64_t hidden_dim) {
     auto pe = torch::zeros({seq_length, hidden_dim});
     pe.index_put_({Slice(), Slice(0, None, 2)}, torch::sin(position * div_term));
     pe.index_put_({Slice(), Slice(1, None, 2)}, torch::cos(position * div_term));
-    
-    return pe.unsqueeze(0);  // Add batch dimension
+    assert(pe.dim() == 2);
+    assert(pe.size(0) == seq_length);
+    assert(pe.size(1) == hidden_dim);
+    return pe;
 }
 
 torch::Tensor apply_positional_encoding(torch::Tensor x) {
@@ -99,8 +103,10 @@ torch::Tensor apply_positional_encoding(torch::Tensor x) {
     auto H = x.size(2);
     auto D = x.size(3);
     auto pe = positional_encoding(L, D);
-    // Broadcast pe to each head
-    return x + pe.unsqueeze(1).expand({B, L, H, D});
+    // pe is now L, D. Pop on singleton B, H dimensions at beginning and end,
+    // and permute H into place for expand()
+    pe = pe.unsqueeze(0).unsqueeze(-1).permute({0, 1, 3, 2}).expand({B, L, H, D});
+    return x + pe;
 }
 
 template <int NEmbeddings, int Dim, int NHeads, int NLayers>
@@ -126,14 +132,14 @@ public:
         assert(x.dim() == 2); // B, L
         assert(x.dtype() == torch::kInt);
         auto z = emb->forward(x);
+        auto B = z.size(0);
+        auto L = z.size(1);
+        auto E = z.size(2);
+        assert(z.dim() == 3); // B, L, E
         // Now we need to copy out to the heads dimension
         z = z.view({x.size(0), x.size(1), NHeads, Dim});
         z = z + apply_positional_encoding(z);
         z = seq->forward(z);
-        assert(z.dim() == 3); // B, L, E
-        auto B = z.size(0);
-        auto L = z.size(1);
-        auto E = z.size(2);
         assert(E == Dim * NHeads);
         assert(B == x.size(0));
         assert(L == x.size(1));
