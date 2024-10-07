@@ -69,4 +69,16 @@ TEST(CharformerTests, ResNorm) {
     auto y = norm.forward(x);
     EXPECT_EQ(y.dim(), 1);
     EXPECT_EQ(y.size(0), 64);
+
+    // Weird dims
+    auto x2 = torch::randn({2, 3, 4, 7, 11});
+    constexpr int D2 = 2 * 3 * 4 * 7 * 11;
+    ResNorm<D2, RMSNorm<D2>> norm2;
+    auto y2 = norm2.forward(x2);
+    EXPECT_EQ(y2.dim(), 5);
+    EXPECT_EQ(y2.size(0), 2);
+    EXPECT_EQ(y2.size(1), 3);
+    EXPECT_EQ(y2.size(2), 4);
+    EXPECT_EQ(y2.size(3), 7);
+    EXPECT_EQ(y2.size(4), 11);
 }
