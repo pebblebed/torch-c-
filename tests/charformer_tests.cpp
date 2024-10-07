@@ -82,3 +82,16 @@ TEST(CharformerTests, ResNorm) {
     EXPECT_EQ(y2.size(3), 7);
     EXPECT_EQ(y2.size(4), 11);
 }
+
+TEST(CharformerTests, SelfAttention) {
+    constexpr int B = 3;
+    constexpr int L = 128;
+    constexpr int H = 10;
+    constexpr int D = 64;
+    SelfAttention<D, H> attn;
+    auto x = torch::randn({B, L, H, D});
+    auto y = attn.forward(x.view({B, L, H * D}));
+    EXPECT_EQ(y.dim(), 1);
+    EXPECT_EQ(y.size(0), 64);
+}
+

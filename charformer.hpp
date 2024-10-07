@@ -51,17 +51,17 @@ class SelfAttention : public nn::Module {
 public:
     SelfAttention()
     : Wqkv()
-    , attn(nn::MultiheadAttentionOptions().num_heads(NHeads).embed_dim(Dim)) {}
+    , attn(nn::MultiheadAttentionOptions(NHeads * Dim, NHeads)) {}
 
-    std::tuple<torch::Tensor, torch::Tensor> forward(torch::Tensor x) {
-        assert(x.dim() == 4); // B, L, H, D
-        assert(x.size(3) == Dim);
-        assert(x.size(2) == NHeads);
-        auto qkv = Wqkv->forward(x);
+    torch::Tensor forward(torch::Tensor x) {
+        assert(x.dim() == 3); // B, L, H, D
+        assert(x.size(2) == NHeads * Dim);
+        auto qkv = Wqkv.forward(x);
         auto q = qkv.slice(1, 0, Dim);
         auto k = qkv.slice(1, Dim, 2*Dim);
         auto v = qkv.slice(1, 2*Dim, 3*Dim);
-        return attn->forward(q, k, v);
+        auto pair = attn->forward(q, k, v);
+        return std::get<0>(pair);
     }
 };
 
