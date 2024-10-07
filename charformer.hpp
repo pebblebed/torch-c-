@@ -6,14 +6,51 @@ namespace trainium {
 
 namespace nn = torch::nn;
 
+template<int Dim>
+class RMSNorm : public nn::Module {
+    torch::Tensor gamma;
+public:
+    RMSNorm()
+    : gamma(register_parameter("gamma", torch::ones({Dim}))) {}
+
+    torch::Tensor forward(torch::Tensor x) {
+        auto sizes = x.sizes();
+        auto flat = x.view({x.size(0), -1});
+        auto flat_y = x * torch::rsqrt(x.square().mean(/*dim=*/0, /*keepdim=*/true) + 1e-6);
+        return flat_y.view(sizes);
+    }
+};
+
+template<int Dim, typename InnerLayer, typename Norm=RMSNorm<Dim>>
+class ResNorm : public nn::Module {
+    InnerLayer layer;
+    Norm norm;
+public:
+    torch::Tensor forward(torch::Tensor x) {
+        return norm.forward(layer.forward(x) + x);
+    }
+};
+
+template <int InDim, int OutDim>
+class Linear : public nn::Module {
+    nn::Linear layer;
+public:
+    Linear()
+    : layer(InDim, OutDim) { }
+
+    torch::Tensor forward(torch::Tensor x) {
+        return layer(x);
+    }
+};
+
 template <int Dim, int NHeads>
 class SelfAttention : public nn::Module {
-    nn::Linear Wqkv;
+    Linear<Dim, 3*Dim> Wqkv;
     nn::MultiheadAttention attn;
 
 public:
     SelfAttention()
-    : Wqkv(Dim, 3*Dim)
+    : Wqkv()
     , attn(nn::MultiheadAttentionOptions().num_heads(NHeads).embed_dim(Dim)) {}
 
     std::tuple<torch::Tensor, torch::Tensor> forward(torch::Tensor x) {
@@ -46,37 +83,16 @@ public:
     }
 };
 
-template<int Dim>
-class RMSNorm : public nn::Module {
-    torch::Tensor gamma;
-public:
-    RMSNorm()
-    : gamma(register_parameter("gamma", torch::ones({Dim}))) {}
-
-    torch::Tensor forward(torch::Tensor x) {
-        return x * torch::rsqrt(x.square().mean(Dim, c10::attr::keepdim=true) + 1e-6);
-    }
-};
-
-template<int Dim, typename InnerLayer, typename Norm=RMSNorm<Dim>>
-class ResNorm : public nn::Module {
-    InnerLayer layer;
-    Norm norm;
-public:
-    torch::Tensor forward(torch::Tensor x) {
-        return norm->forward(layer->forward(x) + x);
-    }
-};
 
 template <int Dim, int NHeads, typename Activation=nn::ReLU>
 class TransformerEncoderLayer : public nn::Module {
-    SelfAttention<Dim, NHeads> attn;
-    FeedForward<1, Dim> ff;
+    ResNorm<Dim, SelfAttention<Dim, NHeads>> attn;
+    ResNorm<Dim, FeedForward<1, Dim>> ff;
 public:
-    std::tuple<torch::Tensor, torch::Tensor> forward(torch::Tensor x) {
+    torch::Tensor forward(torch::Tensor x) {
         auto a = attn->forward(x);
-        auto b = ff->forward(a);
-        return b;
+        auto c = ff->forward(a);
+        return c;
     }
 };
 
@@ -136,13 +152,14 @@ public:
         auto L = z.size(1);
         auto E = z.size(2);
         assert(z.dim() == 3); // B, L, E
-        // Now we need to copy out to the heads dimension
+        // Fold out the heads dimension so positional encoding can be applied
         z = z.view({x.size(0), x.size(1), NHeads, Dim});
         z = z + apply_positional_encoding(z);
         z = seq->forward(z);
         assert(E == Dim * NHeads);
         assert(B == x.size(0));
         assert(L == x.size(1));
+        z = z.view({B, L, E});
         return torch::log_softmax(head->forward(z), 2);
     }
 
