@@ -45,7 +45,7 @@ public:
 
 template <int Dim, int NHeads>
 class SelfAttention : public nn::Module {
-    Linear<Dim, 3*Dim> Wqkv;
+    Linear<NHeads * Dim, 3 * NHeads * Dim> Wqkv;
     nn::MultiheadAttention attn;
 
 public:
@@ -56,7 +56,8 @@ public:
     torch::Tensor forward(torch::Tensor x) {
         assert(x.dim() == 3); // B, L, H, D
         assert(x.size(2) == NHeads * Dim);
-        auto qkv = Wqkv.forward(x);
+        // torch C++ has no batch_first option, so we need to permute
+        auto qkv = Wqkv.forward(x.permute({2, 0, 1}));
         auto q = qkv.slice(1, 0, Dim);
         auto k = qkv.slice(1, Dim, 2*Dim);
         auto v = qkv.slice(1, 2*Dim, 3*Dim);

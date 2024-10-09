@@ -1,8 +1,8 @@
-cmake_minimum_required(VERSION 3.18 FATAL_ERROR)
+cmake_minimum_required(VERSION 3.25 FATAL_ERROR)
 list(APPEND CMAKE_PREFIX_PATH /home/ubuntu/miniconda3/envs/CraftsMan/lib/python3.8/site-packages/torch/share/cmake)
 project(charformer)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(Torch REQUIRED)
