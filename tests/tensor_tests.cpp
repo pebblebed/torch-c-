@@ -3,13 +3,10 @@
 #include "../trails.hpp"
 
 using namespace trails;
+using namespace trails::detail;
 
-TEST(TensorTests, SingleDim) {
-    auto d = TensorDimension<2>();
-    EXPECT_EQ(d.value, 2);
-    EXPECT_EQ(d.dims, 1);
-
-    auto d2 = TensorDimension<2, 3>();
-    EXPECT_EQ(d2.value, 2);
-    EXPECT_EQ(d2.dims, 2);
+TEST(TensorTests, IntSequence) {
+    EXPECT_EQ(int_sequence<>::length, 0);
 }
+
+
