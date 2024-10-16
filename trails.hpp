@@ -30,7 +30,8 @@ struct int_sequence<I, N, Rest...> {
     // Utility to cons up a tuple type
     template<typename ... input_t>
     using tuple_cat_t = decltype(std::tuple_cat(std::declval<input_t>()...));
-    typedef tuple_cat_t<std::tuple<I>, std::tuple<I>> tuple_type;
+    typedef int_sequence<I, Rest...>::tuple_type next_tuple_t;
+    typedef tuple_cat_t<std::tuple<I>, next_tuple_t> tuple_type;
     // typedef tuple_cat_t<std::tuple<I>, int_sequence<I, Rest...>::tuple_type> tuple_type;
 #if 0
     constexpr static int first = N;
