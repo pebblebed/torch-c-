@@ -21,22 +21,26 @@ template<typename I=size_t, I ...N> struct int_sequence {};
 template<typename I>
 struct int_sequence<I> {
     constexpr static I length = 0;
-    constexpr static std::tuple<> values = std::tuple<>();
+    typedef std::tuple<> tuple_type;
 };
 
+template<typename I, I N, I... Rest>
+struct int_sequence<I, N, Rest...> {
+    constexpr static size_t length = 1 + int_sequence<I, Rest...>::length;
+    // Utility to cons up a tuple type
+    template<typename ... input_t>
+    using tuple_cat_t = decltype(std::tuple_cat(std::declval<input_t>()...));
+    typedef tuple_cat_t<std::tuple<I>, std::tuple<I>> tuple_type;
+    // typedef tuple_cat_t<std::tuple<I>, int_sequence<I, Rest...>::tuple_type> tuple_type;
 #if 0
-template<int N, int... Dims>
-struct int_sequence<N, Dims...> {
-    constexpr static size_t length = 1 + int_sequence<Dims...>::length;
-    constexpr static std::tuple<N, Dims...> values = std::tuple_cat(std::tuple<int>({N}), int_sequence<Dims...>::values);
     constexpr static int first = N;
     constexpr static int last = std::get<length - 1>(values);
     template<size_t i>
     struct get {
         constexpr static int value = std::tuple_element<i - 1, std::tuple<N, Dims...>>::value;
     };
-};
 #endif
+};
 
 }
 
