@@ -47,6 +47,9 @@ TEST(TensorTests, Comparison){
 }
 
 TEST(TensorTest, Randn) {
-    Tensor<> t;
+    auto t = Tensor<>::randn();
     EXPECT_TRUE(t.compare_sizes(torch::IntArrayRef{}));
+
+    auto t2 = Tensor<7, 10, 128>::randn();
+    EXPECT_TRUE(t2.compare_sizes(torch::IntArrayRef{7, 10, 128}));
 }
