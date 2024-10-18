@@ -53,3 +53,16 @@ TEST(TensorTest, Randn) {
     auto t2 = Tensor<7, 10, 128>::randn();
     EXPECT_TRUE(t2.compare_sizes(torch::IntArrayRef{7, 10, 128}));
 }
+
+TEST(TensorTest, conv1d) {
+    constexpr int BatchSize = 2;
+    constexpr int InChannels = 3;
+    constexpr int OutChannels = 5;
+    constexpr int Length = 10;
+    constexpr int KernelWidth = 3;
+    constexpr int groups = 1;
+    auto input = Tensor<BatchSize, InChannels, Length>::randn();
+    auto weights = Tensor<OutChannels, InChannels / groups, KernelWidth>::ones();
+    auto output = trails::conv1d(input, weights);
+    EXPECT_TRUE(output.compare_sizes(torch::IntArrayRef{BatchSize, OutChannels, Length}));
+}
