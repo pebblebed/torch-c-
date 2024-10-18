@@ -45,3 +45,8 @@ TEST(TensorTests, Comparison){
     EXPECT_FALSE((Tensor<1, 2>::compare_sizes(torch::IntArrayRef{2, 2})));
     EXPECT_FALSE((Tensor<2, 3>::compare_sizes(torch::IntArrayRef{2, 3, 4})));
 }
+
+TEST(TensorTest, Randn) {
+    Tensor<> t;
+    EXPECT_TRUE(t.compare_sizes(torch::IntArrayRef{}));
+}
