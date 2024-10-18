@@ -109,10 +109,18 @@ struct Tensor {
     }
 
     static bool compare_sizes(torch::IntArrayRef sizes) {
+        if (seq_t::length != sizes.size()) {
+            return false;
+        }
         return detail::compare_sizes_helper_t<seq_t, int64_t(dims) - 1>::compare(seq_t(), sizes);
     }
  
     torch::Tensor dyn() const { return t_; }
+
+    friend std::ostream& operator<<(std::ostream& os, const Tensor& t) {
+        os << t.dyn();
+        return os;
+    }
 
     private:
     torch::Tensor t_;
@@ -128,7 +136,11 @@ conv1d(Tensor<B, in_channels, length> input,
        std::optional<Tensor<B, out_channels, 1>> bias = std::nullopt) {
     return {
         torch::conv1d(input.dyn(), weights.dyn(),
-                      bias ? bias->dyn() : {})
+                      bias ? bias->dyn() : torch::Tensor(),
+                      /*stride*/ torch::IntArrayRef{stride},
+                      /*padding*/ torch::IntArrayRef{padding},
+                      /*dilation*/ torch::IntArrayRef{dilation},
+                      /*groups*/ groups)
     };
 }
 

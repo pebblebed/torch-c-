@@ -64,5 +64,5 @@ TEST(TensorTest, conv1d) {
     auto input = Tensor<BatchSize, InChannels, Length>::randn();
     auto weights = Tensor<OutChannels, InChannels / groups, KernelWidth>::ones();
     auto output = trails::conv1d(input, weights);
-    EXPECT_TRUE(output.compare_sizes(torch::IntArrayRef{BatchSize, OutChannels, Length}));
+    EXPECT_TRUE(output.compare_sizes(torch::IntArrayRef{BatchSize, OutChannels, Length - 2}));
 }
