@@ -1,51 +1,76 @@
 #pragma once
 #include <cassert>
 #include <torch/torch.h>
+#include "trails.hpp"
 
 namespace trainium {
 
 namespace nn = torch::nn;
+using namespace trails;
 
-template<int Dim>
-class RMSNorm : public nn::Module {
-    torch::Tensor gamma;
+template<
+    int B,
+    int ...Dims>
+class RMSNorm : public Module<Tensor<B, Dims...>, Tensor<B, Dims...>> {
+    Tensor<1, Dims...> gamma;
+    using TensorType = Tensor<B, Dims...>;
 public:
     RMSNorm()
-    : gamma(register_parameter("gamma", torch::ones({Dim}))) {}
+    : gamma(torch::nn::Module::register_parameter("gamma", torch::ones({1, Dims...}))) {}
 
-    torch::Tensor forward(torch::Tensor x) {
-        auto sizes = x.sizes();
-        auto flat = x.view({x.size(0), -1});
-        auto flat_y = x * torch::rsqrt(x.square().mean(/*dim=*/0, /*keepdim=*/true) + 1e-6);
-        return flat_y.view(sizes);
+    TensorType forward(TensorType x) {
+        auto dx = x.t();
+        auto sizes = dx.sizes();
+        auto flat = dx.view({dx.size(0), -1});
+        auto flat_y  = dx * torch::rsqrt(dx.square().mean(/*dim=*/0, /*keepdim=*/true) + 1e-6);
+        return { flat_y.view(sizes) * gamma.t() };
     }
 };
 
-template<int Dim, typename InnerLayer, typename Norm=RMSNorm<Dim>>
-class ResNorm : public nn::Module {
-    InnerLayer layer;
+#if 0
+template<
+    typename InputOutput,
+    template<typename, typename> class InnerLayer,
+    typename Norm=RMSNorm<std::get<0>(InputOutput::size)>>
+class ResNorm : public trails::Module<InputOutput, InputOutput> {
+    using TensorType = InputOutput;
+    InnerLayer<InputOutput, InputOutput> layer;
     Norm norm;
 public:
-    torch::Tensor forward(torch::Tensor x) {
+    TensorType forward(TensorType x) {
         return norm.forward(layer.forward(x) + x);
     }
 };
 
-template <int InDim, int OutDim>
-class Linear : public nn::Module {
+/*
+ * Linear layer, assumes batch-first.
+ */
+template <class InTensor, class OutTensor>
+class Linear : public trails::Module<InTensor, OutTensor> {
     nn::Linear layer;
+    static_assert(2 == InTensor::dim);
+    static_assert(2 == OutTensor::dim);
+    constexpr static int in_dims = std::get<1>(InTensor::size);
+    constexpr static int out_dims = std::get<1>(OutTensor::size);
+
 public:
     Linear()
-    : layer(InDim, OutDim) { }
+    : layer(in_dims, out_dims) { }
 
-    torch::Tensor forward(torch::Tensor x) {
+    OutTensor forward(InTensor x) {
         return layer(x);
     }
 };
 
-template <int Dim, int NHeads>
+template <
+    int B,
+    int Dim,
+    int NHeads>
 class SelfAttention : public nn::Module {
-    Linear<NHeads * Dim, 3 * NHeads * Dim> Wqkv;
+    using InputType = trails::Tensor<B, NHeads * Dim>;
+    using WqkvType = trails::Tensor<B, 3 * NHeads * Dim>;
+
+    Linear<InputType, WqkvType> Wqkv;
     nn::MultiheadAttention attn;
 
 public:
@@ -53,7 +78,7 @@ public:
     : Wqkv()
     , attn(nn::MultiheadAttentionOptions(NHeads * Dim, NHeads)) {}
 
-    torch::Tensor forward(torch::Tensor x) {
+    InputType forward(InputType x) override {
         assert(x.dim() == 3); // B, L, H, D
         assert(x.size(2) == NHeads * Dim);
         // torch C++ has no batch_first option, so we need to permute
@@ -62,13 +87,24 @@ public:
         auto k = qkv.slice(1, Dim, 2*Dim);
         auto v = qkv.slice(1, 2*Dim, 3*Dim);
         auto pair = attn->forward(q, k, v);
-        return std::get<0>(pair);
+        return { std::get<0>(pair) };
     }
 };
 
-template <int NLayers, int Dim, int OutDim=Dim, typename Activation=nn::ReLU>
-class FeedForward : public nn::Module {
-    nn::Sequential seq;
+template <typename InputOutput>
+class ReLU : public trails::Module<InputOutput, InputOutput> {
+    using TensorType = InputOutput;
+public:
+    TensorType forward(TensorType x) override {
+        return { x.t().relu() };
+    }
+};
+
+template <
+    typename Activation=nn::ReLU,
+    typename ...Modules>
+class FeedForward : public trails::Module<B, Dim, OutDim> {
+    Modules... modules;
 public:
     FeedForward() {
         for (auto i = 0; i < NLayers; i++) {
@@ -85,10 +121,14 @@ public:
 };
 
 
-template <int Dim, int NHeads, typename Activation=nn::ReLU>
+template <
+    int B,
+    int Dim,
+    int NHeads,
+    typename Activation=nn::ReLU>
 class TransformerEncoderLayer : public nn::Module {
-    ResNorm<Dim, SelfAttention<Dim, NHeads>> attn;
-    ResNorm<Dim, FeedForward<1, Dim>> ff;
+    ResNorm<B, Dim, SelfAttention<B, Dim, NHeads>> attn;
+    ResNorm<B, Dim, FeedForward<B, 1, Dim>> ff;
 public:
     torch::Tensor forward(torch::Tensor x) {
         auto a = attn->forward(x);
@@ -172,4 +212,6 @@ public:
         return forward(t);
     }
 };
+#endif
+
 }

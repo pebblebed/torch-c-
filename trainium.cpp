@@ -2,8 +2,10 @@
 #include "charformer.hpp"
 #include "dataset_dir.hpp"
 #include "util.hpp"
+#include "trails.hpp"
 
 using namespace trainium;
+using namespace trails;
 
 const int B = 12;
 const int D = 64;
@@ -12,11 +14,11 @@ const int H = 12;
 const int layers = 17;
 
 int main(int argc, char** argv) {
-    auto t = torch::rand({2, 3}).cuda();
+    auto t = Tensor<2,3>::randn().cuda();
     auto sq = (t * t).mean();
     std::cout << t << "\n";
     std::cout << sq << "\n";
-    std::cout << t / sq << "\n";
+    std::cout << t / sq.item<float>() << "\n";
 
     if (argc < 2) {
         std::cerr << "Usage: " << argv[0] << " dataset_dir\n";
@@ -25,6 +27,7 @@ int main(int argc, char** argv) {
 
     std::string dataset_dir = argv[1];
     auto dataset = DatasetDir(dataset_dir, B, L);
+#if 0
     auto net = CharFormer<256, 128, 8, 12>();
     net.to(torch::kCUDA);
 
@@ -56,5 +59,6 @@ int main(int argc, char** argv) {
             std::cout << loss.item<float>() << "\n";
         }
     }
+#endif
     return 0;
 }
