@@ -12,7 +12,7 @@ TEST(TensorTests, ValSequence) {
     EXPECT_EQ((val_sequence<double, 1.0, 2.0>::length), 2);
     EXPECT_EQ((val_sequence<double, 1.0, 2.0, 3.0>::length), 3);
 
-    typedef val_sequence<int, 12, 7, -43> vals_3d;
+    using vals_3d = val_sequence<int, 12, 7, -43>;
     EXPECT_EQ(vals_3d::length, 3);
     EXPECT_EQ((vals_3d::get<0>()), 12);
     EXPECT_EQ((vals_3d::get<1>()), 7);
@@ -182,4 +182,21 @@ TEST(TensorTest, abs) {
     for (auto i = 0; i < t.numel(); ++i) {
         EXPECT_EQ(s.data_ptr<float>()[i], std::abs(i));
     }
+}
+
+template<int N>
+static auto mean_test_body() {
+    using T = Tensor<1, 1, N>;
+    auto t = T::arange() + T::ones();
+    auto s = t.mean();
+    std::cerr << "tensor: " << t << "mean: " << s << std::endl;
+    auto exp_sum = (N * N - 1) / 2.0f;
+    auto exp_mean = exp_sum / N;
+    EXPECT_NEAR(s.template item<float>(), exp_mean, 1e-6);
+}
+
+TEST(TensorTest, mean) {
+    mean_test_body<1>();
+    mean_test_body<10>();
+    mean_test_body<100>();
 }

@@ -132,7 +132,7 @@ struct Tensor {
  
     Tensor cuda() { return { t_.cuda() }; }
     template<typename T=float>
-    float item() const {
+    T item() const {
         return t_.item<T>();
     }
     Tensor abs() { return { t_.abs() }; }
