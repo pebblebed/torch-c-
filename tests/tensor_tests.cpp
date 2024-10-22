@@ -167,3 +167,19 @@ TEST(TensorTest, conv2d) {
         OutChannels, InputHeight - (KernelHeight - 1),
         InputWidth - (KernelWidth - 1)}));
 }
+
+TEST(TensorTest, square) {
+    auto t = Tensor<1, 2, 3>::arange();
+    auto s = t.square();
+    for (auto i = 0; i < t.numel(); ++i) {
+        EXPECT_EQ(s.data_ptr<float>()[i], i * i);
+    }
+}
+
+TEST(TensorTest, abs) {
+    auto t = 0.0 - Tensor<1, 2, 3>::arange();
+    auto s = t.abs();
+    for (auto i = 0; i < t.numel(); ++i) {
+        EXPECT_EQ(s.data_ptr<float>()[i], std::abs(i));
+    }
+}
