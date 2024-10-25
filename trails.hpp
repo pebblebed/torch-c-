@@ -70,6 +70,7 @@ std::string str(torch::IntArrayRef sizes) {
     return ss.str();
 }
 
+
 std::ostream& operator<<(std::ostream& os, torch::IntArrayRef sizes) {
     os << str(sizes);
     return os;
@@ -159,6 +160,12 @@ struct Tensor {
     friend std::ostream& operator<<(std::ostream& os, const Tensor& t) {
         os << t.t();
         return os;
+    }
+
+    std::string str() const {
+        std::stringstream ss;
+        ss << t();
+        return ss.str();
     }
 
     private:
@@ -323,6 +330,7 @@ class Sequential : public Module<InputTensorType, OutputTensorType> {
 
 template<typename InputTensorType, typename OutputTensorType, typename TorchLayerType>
 class TorchWrapperLayer : public Module<InputTensorType, OutputTensorType> {
+    protected:
     TorchLayerType layer;
     public:
     TorchWrapperLayer(TorchLayerType& lyr)
@@ -346,6 +354,10 @@ class Linear : public TorchWrapperLayer<Tensor<B, InDim>, Tensor<B, OutDim>, tor
     : TorchWrapperLayer<Tensor<B, InDim>, Tensor<B, OutDim>, torch::nn::Linear>(
         torch::nn::Linear(torch::nn::LinearOptions(InDim, OutDim)))
     {}
+
+    Tensor<B, OutDim> forward(Tensor<B, InDim> input) override {
+        return { TorchWrapperLayer<Tensor<B, InDim>, Tensor<B, OutDim>, torch::nn::Linear>::layer->forward(input.t()).reshape({B, OutDim}) };
+    }
 };
 
 }

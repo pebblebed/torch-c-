@@ -58,17 +58,11 @@ TEST(CharformerTests, Linear) {
     constexpr int InDim = 64;
     constexpr int OutDim = 32;
     Linear<B, InDim, OutDim> linear;
-    auto x = torch::randn({InDim});
+    auto x = torch::randn({B, InDim});
     auto y = linear.forward(x);
-    EXPECT_EQ(y.dim(), 1);
-    EXPECT_EQ(y.size<0>, OutDim);
-
-    // Batched
-    auto x2 = torch::randn({2, InDim});
-    auto y2 = linear.forward(x2);
-    EXPECT_EQ(y2.dim(), 2);
-    EXPECT_EQ(y2.size<0>, 2);
-    EXPECT_EQ(y2.size<1>, OutDim);
+    EXPECT_EQ(y.dim(), 2);
+    EXPECT_EQ(y.size<0>, B);
+    EXPECT_EQ(y.size<1>, OutDim);
 }
 
 TEST(CharformerTests, ResNorm) {
