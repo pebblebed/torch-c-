@@ -24,7 +24,12 @@ struct val_sequence<V> {
     typedef std::tuple<> tuple_t;
     constexpr static tuple_t values = tuple_t();
     static std::string str() { return "()"; }
+
+    class val_sequence_iterator { };
+    constexpr static val_sequence_iterator begin() { return end(); }
+    constexpr static val_sequence_iterator end() { return val_sequence_iterator{}; }
 };
+
 
 template<typename V, V N, V... Rest>
 struct val_sequence<V, N, Rest...> {
@@ -36,11 +41,19 @@ struct val_sequence<V, N, Rest...> {
     typedef tuple_cat_t<std::tuple<V>, typename next_t::tuple_t> tuple_t;
     constexpr static tuple_t values = std::tuple_cat(std::tuple<V>(N), val_sequence<V, Rest...>::values);
 
-    template<int64_t i>
+    template<V i>
     constexpr static V get() {
         return std::get<size_t(i)>(values);
     }
     static std::string str() { return std::to_string(N) + "," + next_t::str(); }
+    struct val_sequence_iterator {
+        V operator*() { return get<0>(); }
+        val_sequence_iterator& operator++() {
+            return next_t::begin();
+        }
+    };
+    constexpr static val_sequence_iterator begin() { return val_sequence_iterator(); }
+    constexpr static val_sequence_iterator end() { return next_t::end(); }
 };
 
 // Primary template
@@ -81,6 +94,10 @@ std::ostream& operator<<(std::ostream& os, const val_sequence<V, Dims...>& seq) 
     os << seq.str();
     return os;
 }
+
+template<typename TensorType, bool keepdim, int64_t ...reduceDims>
+class KeepDims {};
+
 
 }
 
@@ -141,21 +158,28 @@ struct Tensor {
     Tensor<> max() {
        return { t_.max() };
     }
-    Tensor<> mean() {
-        return { t_.mean() };
+    template<bool keepdim=false, int64_t ...reduceDims>
+    detail::KeepDims<Tensor, keepdim, reduceDims...>::tensor_t mean() {
+        return { t_.mean(detail::KeepDims<Tensor, keepdim, reduceDims...>::dims, keepdim) };
     }
 
+    Tensor rsqrt() { return { t_.rsqrt() }; }
     Tensor square() { return *this * *this; }
-    Tensor operator*(Tensor other) { return { t_ * other.t() }; }
-    Tensor operator*(float other) { return { t_ * other }; }
-    Tensor operator/(float other) { return { t_ / other }; }
-    Tensor operator+(Tensor other) { return { t_ + other.t() }; }
-    Tensor operator-(Tensor other) { return { t_ - other.t() }; } 
-    Tensor operator/(Tensor other) { return { t_ / other.t() }; }
-    Tensor operator*(torch::Tensor other) { return { t_ * other }; }
+    Tensor operator+(Tensor<Dims...> other) { return { t_ + other.t() }; }
     Tensor operator+(torch::Tensor other) { return { t_ + other }; }
+    Tensor operator+(float other) { return { t_ + other }; }
+
+    Tensor operator-(Tensor<Dims...> other) { return { t_ - other.t() }; } 
     Tensor operator-(torch::Tensor other) { return { t_ - other }; } 
+    Tensor operator-(float other) { return { t_ - other }; }
+
+    Tensor operator*(Tensor<Dims...> other) { return { t_ * other.t() }; }
+    Tensor operator*(torch::Tensor other) { return { t_ * other }; }
+    Tensor operator*(float other) { return { t_ * other }; }
+
+    Tensor operator/(Tensor<Dims...> other) { return { t_ / other.t() }; }
     Tensor operator/(torch::Tensor other) { return { t_ / other }; }
+    Tensor operator/(float other) { return { t_ / other }; }
 
     friend std::ostream& operator<<(std::ostream& os, const Tensor& t) {
         os << t.t();
@@ -199,91 +223,6 @@ operator/(ftype f, Tensor<Dims...> t) {
 
 using Scalar = Tensor<>;
 
-/* conv1d.
- * See https://pytorch.org/docs/stable/generated/torch.nn.functional.conv1d.html#torch.nn.functional.conv1d
- */
-template<
-    int B,
-    int in_channels,
-    int out_channels,
-    int length,
-    int kernel_size,
-    int groups=1,
-    int stride=1,
-    int padding=0,
-    int dilation=1>
-Tensor<
-    B,
-    out_channels,
-    ((length + 2 * padding - dilation * (kernel_size - 1) - 1) / stride + 1)>
-conv1d(Tensor<B, in_channels, length> input,
-       Tensor<out_channels, in_channels / groups, kernel_size> weights,
-       std::optional<Tensor<B, out_channels, 1>> bias = std::nullopt) {
-    return {
-        torch::conv1d(input.t(), weights.t(),
-                      bias ? bias->t() : torch::Tensor(),
-                      /*stride*/ torch::IntArrayRef{stride},
-                      /*padding*/ torch::IntArrayRef{padding},
-                      /*dilation*/ torch::IntArrayRef{dilation},
-                      /*groups*/ groups)
-    };
-}
-
-template<
-    int B,
-    int in_channels,
-    int out_channels,
-    int input_height,
-    int input_width,
-    int kernel_height,
-    int kernel_width,
-    int groups=1,
-    int stride=1,
-    int padding=0,
-    int dilation=1>
-Tensor<
-    B,
-    out_channels,
-    ((input_height + 2 * padding - dilation * (kernel_height - 1) - 1) / stride + 1),
-    ((input_width  + 2 * padding - dilation * (kernel_width  - 1) - 1) / stride + 1)>
-conv2d(Tensor<B, in_channels, input_height, input_width> input,
-       Tensor<out_channels, in_channels / groups, kernel_height, kernel_width> weights,
-       std::optional<Tensor<out_channels>> bias = std::nullopt) {
-    return { torch::conv2d(input.t(), weights.t(),
-                           bias ? bias->t() : torch::Tensor(),
-                           /*stride*/ torch::IntArrayRef{stride},
-                           /*padding*/ torch::IntArrayRef{padding},
-                           /*dilation*/ torch::IntArrayRef{dilation},
-                           /*groups*/ groups)
-    };
-}
-
-namespace functional {
-template<typename TensorType>
-TensorType add(TensorType a, TensorType b) {
-    return { a.t() + b.t() };
-}
-
-template<typename TensorType>
-TensorType rms_norm(TensorType input, std::optional<TensorType> gamma = std::nullopt) {
-    auto size = input.t().size();
-    auto flat = input.t().view({input.t().size(0), -1});
-    auto flat_y = input.t() * torch::rsqrt(input.t().square().mean(/*dim=*/0, /*keepdim=*/true) + 1e-6);
-    auto gamma_mul = gamma ? flat_y * gamma : flat_y;
-    return { flat_y.view(size) };
-}
-
-template<
-    int B,
-    int Length,
-    int DictionarySize,
-    int EmbeddingDim>
-Tensor<B, EmbeddingDim>
-project(Tensor<B, Length> input, Tensor<DictionarySize, EmbeddingDim> weights) {
-    return torch::nn::functional::embedding(input.t(), weights.t());
-}
-
-}
 
 template<typename InputTensorType, typename OutputTensorType>
 class Module : public torch::nn::Module {
@@ -359,5 +298,161 @@ class Linear : public TorchWrapperLayer<Tensor<B, InDim>, Tensor<B, OutDim>, tor
         return { TorchWrapperLayer<Tensor<B, InDim>, Tensor<B, OutDim>, torch::nn::Linear>::layer->forward(input.t()).reshape({B, OutDim}) };
     }
 };
+
+namespace functional {
+/* conv1d.
+ * See https://pytorch.org/docs/stable/generated/torch.nn.functional.conv1d.html#torch.nn.functional.conv1d
+ */
+template<
+    int B,
+    int in_channels,
+    int out_channels,
+    int length,
+    int kernel_size,
+    int groups=1,
+    int stride=1,
+    int padding=0,
+    int dilation=1>
+Tensor<
+    B,
+    out_channels,
+    ((length + 2 * padding - dilation * (kernel_size - 1) - 1) / stride + 1)>
+conv1d(Tensor<B, in_channels, length> input,
+       Tensor<out_channels, in_channels / groups, kernel_size> weights,
+       std::optional<Tensor<B, out_channels, 1>> bias = std::nullopt) {
+    return {
+        torch::conv1d(input.t(), weights.t(),
+                      bias ? bias->t() : torch::Tensor(),
+                      /*stride*/ torch::IntArrayRef{stride},
+                      /*padding*/ torch::IntArrayRef{padding},
+                      /*dilation*/ torch::IntArrayRef{dilation},
+                      /*groups*/ groups)
+    };
+}
+
+template<
+    int B,
+    int in_channels,
+    int out_channels,
+    int input_height,
+    int input_width,
+    int kernel_height,
+    int kernel_width,
+    int groups=1,
+    int stride=1,
+    int padding=0,
+    int dilation=1>
+Tensor<
+    B,
+    out_channels,
+    ((input_height + 2 * padding - dilation * (kernel_height - 1) - 1) / stride + 1),
+    ((input_width  + 2 * padding - dilation * (kernel_width  - 1) - 1) / stride + 1)>
+conv2d(Tensor<B, in_channels, input_height, input_width> input,
+       Tensor<out_channels, in_channels / groups, kernel_height, kernel_width> weights,
+       std::optional<Tensor<out_channels>> bias = std::nullopt) {
+    return { torch::conv2d(input.t(), weights.t(),
+                           bias ? bias->t() : torch::Tensor(),
+                           /*stride*/ torch::IntArrayRef{stride},
+                           /*padding*/ torch::IntArrayRef{padding},
+                           /*dilation*/ torch::IntArrayRef{dilation},
+                           /*groups*/ groups)
+    };
+}
+
+template<typename TensorType>
+TensorType add(TensorType a, TensorType b) {
+    return { a.t() + b.t() };
+}
+
+template<typename TensorType>
+TensorType rms_norm(TensorType input, std::optional<TensorType> gamma = std::nullopt) {
+    auto size = input.t().size();
+    auto flat = input.t().view({input.t().size(0), -1});
+    auto flat_y = input.t() * torch::rsqrt(input.t().square().mean(/*dim=*/0, /*keepdim=*/true) + 1e-6);
+    auto gamma_mul = gamma ? flat_y * gamma : flat_y;
+    return { flat_y.view(size) };
+}
+
+template<
+    int B,
+    int Length,
+    int DictionarySize,
+    int EmbeddingDim>
+Tensor<B, EmbeddingDim>
+project(Tensor<B, Length> input, Tensor<DictionarySize, EmbeddingDim> weights) {
+    return torch::nn::functional::embedding(input.t(), weights.t());
+}
+
+}
+namespace detail {
+
+// No dims to reduce over and keepdim=false? -> return a Scalar
+template<typename TensorType>
+struct KeepDims<TensorType, false> {
+    using tensor_t = Scalar;
+    static constexpr auto dims = torch::IntArrayRef();
+};
+
+// Dims to reduce over but keepdim=false? Drop the selected dims
+template<typename TensorType, int64_t ...reduceDims>
+class KeepDims<TensorType, false, reduceDims...> {
+    template<size_t I, int64_t Dim, int64_t... Rest>
+    struct DropDim {
+        static constexpr bool should_keep = ((I != Dim) && ... && (I != Rest));
+    };
+
+    template<size_t... Is>
+    static auto filter_dims(std::index_sequence<Is...>) {
+        return std::integer_sequence<int64_t, 
+            (DropDim<Is, reduceDims...>::should_keep ? TensorType::template size<Is> : 0)...
+        >{};
+    }
+
+    template<int64_t... Filtered>
+    static auto remove_zeros(std::integer_sequence<int64_t, Filtered...>) {
+        return std::integer_sequence<int64_t, (Filtered != 0 ? Filtered : 0)...>{};
+    }
+
+    using filtered_dims = decltype(filter_dims(std::make_index_sequence<TensorType::dim()>{}));
+    using final_dims = decltype(remove_zeros(filtered_dims{}));
+
+public:
+    template<int64_t... FinalDims>
+    static auto make_tensor(std::integer_sequence<int64_t, FinalDims...>) {
+        return Tensor<FinalDims...>{};
+    }
+
+    using tensor_t = decltype(make_tensor(final_dims{}));
+    constexpr static auto dims = torch::IntArrayRef(tensor_t::sizes());
+};
+
+// Dims to reduce over but keepdim=true? 1-replace the selected dims
+template<typename TensorType, int64_t ...reduceDims>
+class KeepDims<TensorType, true, reduceDims...> {
+    template<size_t I, int64_t Dim, int64_t... Rest>
+    struct OneOutDim {
+        static constexpr bool should_keep = ((I != Dim) && ... && (I != Rest));
+    };
+
+    template<size_t... Is>
+    static auto filter_dims(std::index_sequence<Is...>) {
+        return std::integer_sequence<int64_t, 
+            (OneOutDim<Is, reduceDims...>::should_keep ? TensorType::template size<Is> : 1)...
+        >{};
+    }
+    using filtered_dims = decltype(filter_dims(std::make_index_sequence<TensorType::dim()>{}));
+
+public:
+    template<int64_t... FinalDims>
+    static auto make_tensor(std::integer_sequence<int64_t, FinalDims...>) {
+        return Tensor<FinalDims...>{};
+    }
+
+    using tensor_t = decltype(make_tensor(filtered_dims{}));
+    template<int64_t... FinalDims>
+    constexpr static auto dims = torch::IntArrayRef(Tensor<FinalDims...>::sizes());
+};
+
+}
 
 }

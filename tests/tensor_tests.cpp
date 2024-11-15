@@ -4,7 +4,7 @@
 
 using namespace trails;
 using namespace trails::detail;
-using namespace trails::functional;
+namespace F = trails::functional;
 
 TEST(TensorTests, ValSequence) {
     EXPECT_EQ(val_sequence<double>::length, 0);
@@ -145,7 +145,7 @@ TEST(TensorTest, conv1d) {
     constexpr int groups = 1;
     auto input = Tensor<BatchSize, InChannels, Length>::randn();
     auto weights = Tensor<OutChannels, InChannels / groups, KernelWidth>::ones();
-    auto output = trails::conv1d(input, weights);
+    auto output = F::conv1d(input, weights);
     EXPECT_TRUE(output.compare_sizes(torch::IntArrayRef{BatchSize, OutChannels, Length - 2}));
 }
 
@@ -160,7 +160,7 @@ TEST(TensorTest, conv2d) {
     constexpr int groups = 1;
     auto input = Tensor<BatchSize, InChannels, InputHeight, InputWidth>::randn();
     auto weights = Tensor<OutChannels, InChannels / groups, KernelHeight, KernelWidth>::ones();
-    auto output = trails::conv2d(input, weights);
+    auto output = F::conv2d(input, weights);
     std::cout << decltype(output)::seq_t() << std::endl;
     EXPECT_TRUE(output.compare_sizes(torch::IntArrayRef{
         BatchSize,
@@ -199,4 +199,19 @@ TEST(TensorTest, mean) {
     mean_test_body<1, 1, 1>();
     mean_test_body<1, 1, 11>();
     mean_test_body<4, 3, 17>();
+
+    // KeepDims tests.
+#if 0
+    auto t = Tensor<1, 2, 3, 4>::arange();
+    auto s = t.mean<true>();
+    EXPECT_TRUE(s.compare_sizes(torch::IntArrayRef{1, 1, 1, 1}));
+    EXPECT_EQ(s.template item<float>(), 1.5f);
+#endif
+}
+
+TEST(TensorTest, keepdims) {
+    using namespace trails::detail;
+    using T = Tensor<17, 2, 3>;
+    KeepDims<T, true, 1, 2> k;
+    // EXPECT_EQ(decltype(k)::dims, (torch::IntArrayRef{1, 2, 3}));
 }

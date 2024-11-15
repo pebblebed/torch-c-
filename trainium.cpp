@@ -14,11 +14,13 @@ const int H = 12;
 const int layers = 17;
 
 int main(int argc, char** argv) {
+#if 0
     auto t = Tensor<2,3>::randn().cuda();
     auto sq = (t * t).mean();
     std::cout << t << "\n";
     std::cout << sq << "\n";
     std::cout << t / sq.item<float>() << "\n";
+#endif
 
     if (argc < 2) {
         std::cerr << "Usage: " << argv[0] << " dataset_dir\n";

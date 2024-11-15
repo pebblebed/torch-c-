@@ -19,11 +19,10 @@ public:
     : gamma(torch::nn::Module::register_parameter("gamma", torch::ones({1, Dims...}))) {}
 
     TensorType forward(TensorType x) {
-        auto dx = x.t();
-        auto sizes = dx.sizes();
-        auto flat = dx.view({dx.size(0), -1});
-        auto flat_y  = dx * torch::rsqrt(dx.square().mean(/*dim=*/0, /*keepdim=*/true) + 1e-6);
-        return { flat_y.view(sizes) * gamma.t() };
+        auto variance = x.square().mean();
+        auto rms = variance.rsqrt() + 1e-6;
+        auto y  = x * rms;
+        return y * gamma.t();
     }
 };
 
