@@ -14,23 +14,23 @@ TEST(TensorTests, ValSequence) {
 
     typedef val_sequence<int, 12, 7, -43> vals_3d;
     EXPECT_EQ(vals_3d::length, 3);
-    EXPECT_EQ((vals_3d::get<0>()), 12);
-    EXPECT_EQ((vals_3d::get<1>()), 7);
-    EXPECT_EQ((vals_3d::get<2>()), -43);
+    EXPECT_EQ((vals_3d::get<0>::value), 12);
+    EXPECT_EQ((vals_3d::get<1>::value), 7);
+    EXPECT_EQ((vals_3d::get<2>::value), -43);
 
     typedef val_sequence<int, 12, 7, -43, 1> vals_4d;
     EXPECT_EQ(vals_4d::length, 4);
-    EXPECT_EQ(vals_4d::get<0>(), 12);
-    EXPECT_EQ(vals_4d::get<1>(), 7);
-    EXPECT_EQ(vals_4d::get<2>(), -43);
-    EXPECT_EQ(vals_4d::get<3>(), 1);
+    EXPECT_EQ(vals_4d::get<0>::value, 12);
+    EXPECT_EQ(vals_4d::get<1>::value, 7);
+    EXPECT_EQ(vals_4d::get<2>::value, -43);
+    EXPECT_EQ(vals_4d::get<3>::value, 1);
 }
 
 TEST(TensorTests, ValSequenceIndexing) {
-    EXPECT_EQ((val_sequence<int, 12, 7, -43, 1>::get<0>()), 12);
-    EXPECT_EQ((val_sequence<int, 12, 7, -43, 1>::get<1>()), 7);
-    EXPECT_EQ((val_sequence<int, 12, 7, -43, 1>::get<2>()), -43);
-    EXPECT_EQ((val_sequence<int, 12, 7, -43, 1>::get<3>()), 1);
+    EXPECT_EQ((val_sequence<int, 12, 7, -43, 1>::get<0>::value), 12);
+    EXPECT_EQ((val_sequence<int, 12, 7, -43, 1>::get<1>::value), 7);
+    EXPECT_EQ((val_sequence<int, 12, 7, -43, 1>::get<2>::value), -43);
+    EXPECT_EQ((val_sequence<int, 12, 7, -43, 1>::get<3>::value), 1);
 }
 
 TEST(TensorTests, Comparison){
@@ -212,6 +212,24 @@ TEST(TensorTest, mean) {
 TEST(TensorTest, keepdims) {
     using namespace trails::detail;
     using T = Tensor<17, 2, 3>;
-    KeepDims<T, true, 1, 2> k;
-    // EXPECT_EQ(decltype(k)::dims, (torch::IntArrayRef{1, 2, 3}));
+    using K = KeepDims<T, true, 1, 2>;
+    K k;
+    // static const auto dims = K::dims;
+    // EXPECT_EQ(dims, (std::array<int64_t, 3>{17, 1, 1}));
+}
+
+TEST(TensorTest, set_dim) {
+    using namespace trails::detail;
+    using T0 = val_sequence<int>;
+    using T01 = val_sequence<int, 1>;
+    static_assert(!T0::equals<T01>::value);
+    static_assert(T0::equals<T0>::value);
+    static_assert(T01::equals<T01>::value);
+
+#if 0
+    using T1 = val_sequence<int, 1, 2, 3>;
+    using T2 = T1::set_dim<1, 4>::type;
+    using T3 = val_sequence<int, 1, 4, 3>;
+    // static_assert(T2::equals<T3>::value);
+#endif
 }

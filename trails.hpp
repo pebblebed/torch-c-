@@ -17,7 +17,8 @@ namespace trails {
 namespace detail {
 
 template<typename I=size_t, I ...N> struct val_sequence {};
-// Specialization for 0-D
+
+// Zero-length specialization
 template<typename V>
 struct val_sequence<V> {
     constexpr static size_t length = 0;
@@ -28,6 +29,19 @@ struct val_sequence<V> {
     class val_sequence_iterator { };
     constexpr static val_sequence_iterator begin() { return end(); }
     constexpr static val_sequence_iterator end() { return val_sequence_iterator{}; }
+
+    // get/set not defined for 0-D
+    template<typename S2>
+    struct equals {
+        static constexpr bool value = S2::length == 0;
+    };
+
+    template<size_t I>
+    struct get {
+        static_assert(I < length, "get index out of bounds");
+        // Not reached
+        static constexpr V value = V {};
+    };
 };
 
 
@@ -41,13 +55,32 @@ struct val_sequence<V, N, Rest...> {
     typedef tuple_cat_t<std::tuple<V>, typename next_t::tuple_t> tuple_t;
     constexpr static tuple_t values = std::tuple_cat(std::tuple<V>(N), val_sequence<V, Rest...>::values);
 
-    template<V i>
-    constexpr static V get() {
-        return std::get<size_t(i)>(values);
-    }
+    template<size_t I>
+    struct get : std::conditional_t<I == 0,
+        std::integral_constant<V, N>,
+        typename next_t::template get<I - 1>> { };
+
+
+    template<int64_t i, V v>
+    struct set_dim {
+        using type = set_dim<i - 1, v>::type;
+    };
+
+    template<V v>
+    struct set_dim<0, v> {
+        using type = val_sequence<V, v, Rest...>;
+    };
+
+    template<typename S2>
+    struct equals {
+        static constexpr bool value = S2::length == length &&
+            N == S2::template get<0>::value &&
+            next_t::template equals<typename S2::next_t>::value;
+    };
+
     static std::string str() { return std::to_string(N) + "," + next_t::str(); }
     struct val_sequence_iterator {
-        V operator*() { return get<0>(); }
+        V operator*() { return get<0>::value; }
         val_sequence_iterator& operator++() {
             return next_t::begin();
         }
@@ -60,7 +93,8 @@ struct val_sequence<V, N, Rest...> {
 template<typename Seq, int64_t i>
 struct compare_sizes_helper_t {
     static bool compare(const Seq& seq, torch::IntArrayRef sizes) {
-        return seq.template get<i>() == sizes[i] && compare_sizes_helper_t<Seq, i - 1>::compare(seq, sizes);
+        return Seq::template get<i>::value == sizes[i] &&
+        compare_sizes_helper_t<Seq, i - 1>::compare(seq, sizes);
     }
 };
 
@@ -69,6 +103,7 @@ template<typename Seq>
 struct compare_sizes_helper_t<Seq, -1> {
     static bool compare(const Seq&, torch::IntArrayRef) { return true; }
 };
+
 
 std::string str(torch::IntArrayRef sizes) {
     std::stringstream ss;
@@ -96,10 +131,9 @@ std::ostream& operator<<(std::ostream& os, const val_sequence<V, Dims...>& seq) 
 }
 
 template<typename TensorType, bool keepdim, int64_t ...reduceDims>
-class KeepDims {};
+class KeepDims { };
 
-
-}
+} // namespace detail
 
 template<int ...Dims>
 struct Tensor {
@@ -390,7 +424,7 @@ namespace detail {
 template<typename TensorType>
 struct KeepDims<TensorType, false> {
     using tensor_t = Scalar;
-    static constexpr auto dims = torch::IntArrayRef();
+    static constexpr auto dims = torch::IntArrayRef{};
 };
 
 // Dims to reduce over but keepdim=false? Drop the selected dims
