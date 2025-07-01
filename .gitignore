@@ -37,3 +37,4 @@ libtorch*.zip
 build/*
 
 .vscode/*
+.venv/*
