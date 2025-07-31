@@ -131,7 +131,7 @@ std::ostream& operator<<(std::ostream& os, const val_sequence<V, Dims...>& seq) 
 }
 
 template<typename TensorType, bool keepdim, int64_t ...reduceDims>
-class KeepDims { };
+class ReduceDims { };
 
 } // namespace detail
 
@@ -193,8 +193,8 @@ struct Tensor {
        return { t_.max() };
     }
     template<bool keepdim=false, int64_t ...reduceDims>
-    detail::KeepDims<Tensor, keepdim, reduceDims...>::tensor_t mean() {
-        return { t_.mean(detail::KeepDims<Tensor, keepdim, reduceDims...>::dims, keepdim) };
+    detail::ReduceDims<Tensor, keepdim, reduceDims...>::tensor_t mean() {
+        return { t_.mean(detail::ReduceDims<Tensor, keepdim, reduceDims...>::dims, keepdim) };
     }
 
     Tensor rsqrt() { return { t_.rsqrt() }; }
@@ -422,14 +422,14 @@ namespace detail {
 
 // No dims to reduce over and keepdim=false? -> return a Scalar
 template<typename TensorType>
-struct KeepDims<TensorType, false> {
+struct ReduceDims<TensorType, false> {
     using tensor_t = Scalar;
     static constexpr auto dims = torch::IntArrayRef{};
 };
 
 // Dims to reduce over but keepdim=false? Drop the selected dims
 template<typename TensorType, int64_t ...reduceDims>
-class KeepDims<TensorType, false, reduceDims...> {
+class ReduceDims<TensorType, false, reduceDims...> {
     template<size_t I, int64_t Dim, int64_t... Rest>
     struct DropDim {
         static constexpr bool should_keep = ((I != Dim) && ... && (I != Rest));
@@ -457,12 +457,13 @@ public:
     }
 
     using tensor_t = decltype(make_tensor(final_dims{}));
-    constexpr static auto dims = torch::IntArrayRef(tensor_t::sizes());
+    constexpr static auto dims_array = tuple_to_array<int64_t>(tensor_t::sizes());
+    constexpr static auto dims = torch::IntArrayRef(dims_array);
 };
 
 // Dims to reduce over but keepdim=true? 1-replace the selected dims
 template<typename TensorType, int64_t ...reduceDims>
-class KeepDims<TensorType, true, reduceDims...> {
+class ReduceDims<TensorType, true, reduceDims...> {
     template<size_t I, int64_t Dim, int64_t... Rest>
     struct OneOutDim {
         static constexpr bool should_keep = ((I != Dim) && ... && (I != Rest));
@@ -483,9 +484,20 @@ public:
     }
 
     using tensor_t = decltype(make_tensor(filtered_dims{}));
-    template<int64_t... FinalDims>
-    constexpr static auto dims = torch::IntArrayRef(Tensor<FinalDims...>::sizes());
+    constexpr static auto dims_array = tuple_to_array<int64_t>(tensor_t::sizes());
+    constexpr static auto dims = torch::IntArrayRef(dims_array);
 };
+
+// Helper to convert tuple to array
+template<typename T, typename Tuple, std::size_t... Is>
+constexpr auto tuple_to_array_impl(const Tuple& t, std::index_sequence<Is...>) {
+    return std::array<T, sizeof...(Is)>{(T)std::get<Is>(t)...};
+}
+
+template<typename T, typename Tuple>
+constexpr auto tuple_to_array(const Tuple& t) {
+    return tuple_to_array_impl<T>(t, std::make_index_sequence<std::tuple_size_v<Tuple>>{});
+}
 
 }
 

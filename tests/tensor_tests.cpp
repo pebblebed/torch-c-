@@ -200,7 +200,7 @@ TEST(TensorTest, mean) {
     mean_test_body<1, 1, 11>();
     mean_test_body<4, 3, 17>();
 
-    // KeepDims tests.
+    // ReduceDims tests.
 #if 0
     auto t = Tensor<1, 2, 3, 4>::arange();
     auto s = t.mean<true>();
@@ -209,12 +209,14 @@ TEST(TensorTest, mean) {
 #endif
 }
 
-TEST(TensorTest, keepdims) {
+TEST(TensorTest, reducedims) {
     using namespace trails::detail;
-    using T = Tensor<17, 2, 3>;
-    using K = KeepDims<T, true, 1, 2>;
-    K k;
-    // static const auto dims = K::dims;
+    {
+        using T = Tensor<17, 2, 3>;
+        using K = ReduceDims<T, false, 1, 2>;
+        K k;
+        static const auto dims = K::dims;
+    }
     // EXPECT_EQ(dims, (std::array<int64_t, 3>{17, 1, 1}));
 }
 
