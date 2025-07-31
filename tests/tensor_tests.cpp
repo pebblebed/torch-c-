@@ -226,10 +226,8 @@ TEST(TensorTest, set_dim) {
     static_assert(T0::equals<T0>::value);
     static_assert(T01::equals<T01>::value);
 
-#if 0
     using T1 = val_sequence<int, 1, 2, 3>;
     using T2 = T1::set_dim<1, 4>::type;
     using T3 = val_sequence<int, 1, 4, 3>;
     // static_assert(T2::equals<T3>::value);
-#endif
 }
