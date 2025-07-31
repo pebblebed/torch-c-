@@ -216,6 +216,7 @@ TEST(TensorTest, reducedims) {
         using K = ReduceDims<T, false, 1, 2>;
         K k;
         static const auto dims = K::dims;
+        EXPECT_EQ(dims, (std::array<int64_t, 1>{17}));
     }
     // EXPECT_EQ(dims, (std::array<int64_t, 3>{17, 1, 1}));
 }

@@ -444,13 +444,45 @@ class ReduceDims<TensorType, false, reduceDims...> {
 
     template<int64_t... Filtered>
     static auto remove_zeros(std::integer_sequence<int64_t, Filtered...>) {
-        return std::integer_sequence<int64_t, (Filtered != 0 ? Filtered : 0)...>{};
+        return remove_zeros_impl<Filtered...>();
     }
 
-    using filtered_dims = decltype(filter_dims(std::make_index_sequence<TensorType::dim()>{}));
-    using final_dims = decltype(remove_zeros(filtered_dims{}));
+private:
+    // Helper to recursively filter out zeros from parameter pack
+    template<int64_t First, int64_t... Rest>
+    static auto remove_zeros_impl() {
+        if constexpr (sizeof...(Rest) == 0) {
+            // Base case: single element
+            if constexpr (First != 0) {
+                return std::integer_sequence<int64_t, First>{};
+            } else {
+                return std::integer_sequence<int64_t>{};
+            }
+        } else {
+            // Recursive case: process first element and combine with rest
+            auto rest_filtered = remove_zeros_impl<Rest...>();
+            if constexpr (First != 0) {
+                return prepend_to_sequence<First>(rest_filtered);
+            } else {
+                return rest_filtered;
+            }
+        }
+    }
+
+    // Helper to prepend a value to an integer sequence
+    template<int64_t Value, int64_t... Seq>
+    static auto prepend_to_sequence(std::integer_sequence<int64_t, Seq...>) {
+        return std::integer_sequence<int64_t, Value, Seq...>{};
+    }
+
+    // Specialization for empty sequence
+    static auto remove_zeros_impl() {
+        return std::integer_sequence<int64_t>{};
+    }
 
 public:
+    using filtered_dims = decltype(filter_dims(std::make_index_sequence<TensorType::dim()>{}));
+    using final_dims = decltype(remove_zeros(filtered_dims{}));
     template<int64_t... FinalDims>
     static auto make_tensor(std::integer_sequence<int64_t, FinalDims...>) {
         return Tensor<FinalDims...>{};
