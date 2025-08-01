@@ -213,12 +213,19 @@ TEST(TensorTest, reducedims) {
     using namespace trails::detail;
     {
         using T = Tensor<17, 2, 3>;
-        using K = ReduceDims<T, false, 1, 2>;
-        K k;
-        static const auto dims = K::dims;
-        EXPECT_EQ(dims, (std::array<int64_t, 1>{17}));
+        {
+            using K = ReduceDims<T, false, 1, 2>;
+            K k;
+            static const auto dims = K::dims;
+            EXPECT_EQ(dims, (std::array<int64_t, 1>{17}));
+        }
+        {
+            using K = ReduceDims<T, true, 1, 2>;
+            K k;
+            static const auto dims = K::dims;
+            EXPECT_EQ(dims, (std::array<int64_t, 3>{17, 1, 1}));
+        }
     }
-    // EXPECT_EQ(dims, (std::array<int64_t, 3>{17, 1, 1}));
 }
 
 TEST(TensorTest, set_dim) {
@@ -231,6 +238,8 @@ TEST(TensorTest, set_dim) {
 
     using T1 = val_sequence<int, 1, 2, 3>;
     using T2 = T1::set_dim<1, 4>::type;
-    using T3 = val_sequence<int, 1, 4, 3>;
-    // static_assert(T2::equals<T3>::value);
+    static_assert(T2::equals<val_sequence<int, 1, 4, 3>>::value);
+    
+    using T3 = T1::set_dim<0, 4>::type;
+    static_assert(T3::equals<val_sequence<int, 4, 2, 3>>::value);
 }

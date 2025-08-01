@@ -61,9 +61,18 @@ struct val_sequence<V, N, Rest...> {
         typename next_t::template get<I - 1>> { };
 
 
+    // Helper to prepend a value to a val_sequence type
+    template<V head, typename Tail>
+    struct prepend;
+
+    template<V head, V... tail_values>
+    struct prepend<head, val_sequence<V, tail_values...>> {
+        using type = val_sequence<V, head, tail_values...>;
+    };
+
     template<int64_t i, V v>
     struct set_dim {
-        using type = set_dim<i - 1, v>::type;
+        using type = typename prepend<N, typename next_t::template set_dim<i - 1, v>::type>::type;
     };
 
     template<V v>
