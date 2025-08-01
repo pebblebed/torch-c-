@@ -62,7 +62,7 @@ TEST(CharformerTests, Linear) {
     constexpr int B = 1;
     constexpr int InDim = 64;
     constexpr int OutDim = 32;
-    Linear<B, InDim, OutDim> linear;
+    trails::Linear<B, InDim, OutDim> linear;
     auto x = torch::randn({B, InDim});
     auto y = linear.forward(x);
     EXPECT_EQ(y.dim(), 2);

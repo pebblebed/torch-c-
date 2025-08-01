@@ -26,7 +26,6 @@ public:
     }
 };
 
-#if 0
 template<
     typename InputOutput,
     template<typename, typename> class InnerLayer,
@@ -61,6 +60,7 @@ public:
     }
 };
 
+#if 0
 template <
     int B,
     int Dim,
