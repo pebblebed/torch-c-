@@ -239,7 +239,161 @@ TEST(TensorTest, set_dim) {
     using T1 = val_sequence<int, 1, 2, 3>;
     using T2 = T1::set_dim<1, 4>::type;
     static_assert(T2::equals<val_sequence<int, 1, 4, 3>>::value);
-    
+
     using T3 = T1::set_dim<0, 4>::type;
     static_assert(T3::equals<val_sequence<int, 4, 2, 3>>::value);
+}
+
+// ---- Wave 1A: Core Tensor operations ----
+
+TEST(TensorTest, matmul_2d) {
+    // M=2, K=3, N=4: ones(2,3) x ones(3,4) = 3*ones(2,4)
+    auto a = Tensor<2, 3>::ones();
+    auto b = Tensor<3, 4>::ones();
+    auto c = matmul(a, b);
+    EXPECT_TRUE(c.compare_sizes(torch::IntArrayRef{2, 4}));
+    for (int i = 0; i < c.numel(); ++i) {
+        EXPECT_FLOAT_EQ(c.data_ptr<float>()[i], 3.0f);
+    }
+}
+
+TEST(TensorTest, matmul_2d_identity) {
+    // Multiply by identity-like: arange reshaped
+    auto a = Tensor<2, 2>::ones();
+    auto eye = Tensor<2, 2>(torch::eye(2));
+    auto c = matmul(a, eye);
+    EXPECT_TRUE(c.compare_sizes(torch::IntArrayRef{2, 2}));
+    // ones * eye = ones
+    for (int i = 0; i < c.numel(); ++i) {
+        EXPECT_FLOAT_EQ(c.data_ptr<float>()[i], 1.0f);
+    }
+}
+
+TEST(TensorTest, matmul_batched_3d) {
+    // B=2, M=3, K=4, N=5
+    auto a = Tensor<2, 3, 4>::ones();
+    auto b = Tensor<2, 4, 5>::ones();
+    auto c = matmul(a, b);
+    EXPECT_TRUE(c.compare_sizes(torch::IntArrayRef{2, 3, 5}));
+    for (int i = 0; i < c.numel(); ++i) {
+        EXPECT_FLOAT_EQ(c.data_ptr<float>()[i], 4.0f);
+    }
+}
+
+TEST(TensorTest, transpose_2d) {
+    auto t = Tensor<2, 3>::arange();
+    auto tr = t.transpose<0, 1>();
+    EXPECT_TRUE(tr.compare_sizes(torch::IntArrayRef{3, 2}));
+    // Check that element [0,1] of original == element [1,0] of transposed
+    auto orig_val = t.t().index({0, 1}).item<float>();
+    auto trans_val = tr.t().index({1, 0}).item<float>();
+    EXPECT_FLOAT_EQ(orig_val, trans_val);
+}
+
+TEST(TensorTest, transpose_3d) {
+    auto t = Tensor<2, 3, 4>::randn();
+    auto tr = t.transpose<0, 2>();
+    EXPECT_TRUE(tr.compare_sizes(torch::IntArrayRef{4, 3, 2}));
+    // Verify a specific element
+    auto orig_val = t.t().index({1, 2, 3}).item<float>();
+    auto trans_val = tr.t().index({3, 2, 1}).item<float>();
+    EXPECT_FLOAT_EQ(orig_val, trans_val);
+}
+
+TEST(TensorTest, transpose_same_dim) {
+    // Transposing same dim is identity
+    auto t = Tensor<2, 3>::arange();
+    auto tr = t.transpose<0, 0>();
+    EXPECT_TRUE(tr.compare_sizes(torch::IntArrayRef{2, 3}));
+}
+
+TEST(TensorTest, reshape_basic) {
+    auto t = Tensor<2, 3>::arange();
+    auto r = t.reshape<3, 2>();
+    EXPECT_TRUE(r.compare_sizes(torch::IntArrayRef{3, 2}));
+    EXPECT_EQ(r.numel(), t.numel());
+}
+
+TEST(TensorTest, reshape_flatten) {
+    auto t = Tensor<2, 3, 4>::ones();
+    auto r = t.reshape<24>();
+    EXPECT_TRUE(r.compare_sizes(torch::IntArrayRef{24}));
+}
+
+TEST(TensorTest, view_basic) {
+    auto t = Tensor<2, 3>::arange();
+    auto v = t.view<6>();
+    EXPECT_TRUE(v.compare_sizes(torch::IntArrayRef{6}));
+    // Values should be preserved
+    for (int i = 0; i < 6; ++i) {
+        EXPECT_FLOAT_EQ(v.data_ptr<float>()[i], float(i));
+    }
+}
+
+TEST(TensorTest, view_expand_dims) {
+    auto t = Tensor<12>::arange();
+    auto v = t.view<3, 4>();
+    EXPECT_TRUE(v.compare_sizes(torch::IntArrayRef{3, 4}));
+}
+
+TEST(TensorTest, unsqueeze_front) {
+    auto t = Tensor<2, 3>::arange();
+    auto u = t.unsqueeze<0>();
+    EXPECT_TRUE(u.compare_sizes(torch::IntArrayRef{1, 2, 3}));
+}
+
+TEST(TensorTest, unsqueeze_middle) {
+    auto t = Tensor<2, 3>::arange();
+    auto u = t.unsqueeze<1>();
+    EXPECT_TRUE(u.compare_sizes(torch::IntArrayRef{2, 1, 3}));
+}
+
+TEST(TensorTest, unsqueeze_back) {
+    auto t = Tensor<2, 3>::arange();
+    auto u = t.unsqueeze<2>();
+    EXPECT_TRUE(u.compare_sizes(torch::IntArrayRef{2, 3, 1}));
+}
+
+TEST(TensorTest, squeeze_front) {
+    auto t = Tensor<1, 2, 3>::arange();
+    auto s = t.squeeze<0>();
+    EXPECT_TRUE(s.compare_sizes(torch::IntArrayRef{2, 3}));
+}
+
+TEST(TensorTest, squeeze_middle) {
+    auto t = Tensor<2, 1, 3>::arange();
+    auto s = t.squeeze<1>();
+    EXPECT_TRUE(s.compare_sizes(torch::IntArrayRef{2, 3}));
+}
+
+TEST(TensorTest, squeeze_roundtrip) {
+    // unsqueeze then squeeze should give back original shape
+    auto t = Tensor<2, 3>::arange();
+    auto u = t.unsqueeze<1>();
+    auto s = u.squeeze<1>();
+    EXPECT_TRUE(s.compare_sizes(torch::IntArrayRef{2, 3}));
+    for (int i = 0; i < t.numel(); ++i) {
+        EXPECT_FLOAT_EQ(s.data_ptr<float>()[i], t.data_ptr<float>()[i]);
+    }
+}
+
+TEST(TensorTest, cat_dim0) {
+    auto a = Tensor<2, 3>::ones();
+    auto b = Tensor<4, 3>::ones();
+    auto c = F::cat<0>(a, b);
+    EXPECT_TRUE(c.compare_sizes(torch::IntArrayRef{6, 3}));
+}
+
+TEST(TensorTest, cat_dim1) {
+    auto a = Tensor<2, 3>::ones();
+    auto b = Tensor<2, 5>::ones();
+    auto c = F::cat<1>(a, b);
+    EXPECT_TRUE(c.compare_sizes(torch::IntArrayRef{2, 8}));
+}
+
+TEST(TensorTest, cat_3d) {
+    auto a = Tensor<2, 3, 4>::arange();
+    auto b = Tensor<2, 3, 6>::ones();
+    auto c = F::cat<2>(a, b);
+    EXPECT_TRUE(c.compare_sizes(torch::IntArrayRef{2, 3, 10}));
 }

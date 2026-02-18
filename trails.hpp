@@ -142,6 +142,77 @@ std::ostream& operator<<(std::ostream& os, const val_sequence<V, Dims...>& seq) 
 template<typename TensorType, bool keepdim, int64_t ...reduceDims>
 class ReduceDims { };
 
+// ---- Shape-manipulation helpers for transpose, unsqueeze, squeeze, reshape, cat ----
+
+// swap_dims<Seq, I, J>: swap dimensions at positions I and J via set_dim
+template<typename Seq, size_t I, size_t J>
+struct swap_dims {
+    static constexpr auto vi = Seq::template get<I>::value;
+    static constexpr auto vj = Seq::template get<J>::value;
+    using step1 = typename Seq::template set_dim<I, vj>::type;
+    using type = typename step1::template set_dim<J, vi>::type;
+};
+
+// insert_dim<Seq, Pos, Val>: insert a value at position Pos
+template<typename Seq, size_t Pos, auto Val, typename Prefix = val_sequence<size_t>>
+struct insert_dim;
+
+// Pos == 0: insert Val before remaining elements
+template<typename V, V Head, V... Tail, V Val, V... Prefix>
+struct insert_dim<val_sequence<V, Head, Tail...>, 0, Val, val_sequence<V, Prefix...>> {
+    using type = val_sequence<V, Prefix..., Val, Head, Tail...>;
+};
+
+// Pos > 0: move Head to Prefix and recurse
+template<typename V, V Head, V... Tail, size_t Pos, V Val, V... Prefix>
+struct insert_dim<val_sequence<V, Head, Tail...>, Pos, Val, val_sequence<V, Prefix...>> {
+    using type = typename insert_dim<val_sequence<V, Tail...>, Pos - 1, Val, val_sequence<V, Prefix..., Head>>::type;
+};
+
+// Base case: empty sequence, Pos must be 0 — append Val
+template<typename V, V Val, V... Prefix>
+struct insert_dim<val_sequence<V>, 0, Val, val_sequence<V, Prefix...>> {
+    using type = val_sequence<V, Prefix..., Val>;
+};
+
+// remove_dim<Seq, Pos>: remove dimension at position Pos
+template<typename Seq, size_t Pos, typename Prefix = val_sequence<size_t>>
+struct remove_dim;
+
+// Pos == 0: skip Head, append Tail
+template<typename V, V Head, V... Tail, V... Prefix>
+struct remove_dim<val_sequence<V, Head, Tail...>, 0, val_sequence<V, Prefix...>> {
+    using type = val_sequence<V, Prefix..., Tail...>;
+};
+
+// Pos > 0: move Head to Prefix and recurse
+template<typename V, V Head, V... Tail, size_t Pos, V... Prefix>
+struct remove_dim<val_sequence<V, Head, Tail...>, Pos, val_sequence<V, Prefix...>> {
+    using type = typename remove_dim<val_sequence<V, Tail...>, Pos - 1, val_sequence<V, Prefix..., Head>>::type;
+};
+
+// replace_dim<Seq, Pos, NewVal>: replace dimension at Pos with NewVal
+template<typename Seq, size_t Pos, auto NewVal>
+struct replace_dim {
+    using type = typename Seq::template set_dim<Pos, NewVal>::type;
+};
+
+} // namespace detail
+
+// Forward declaration for seq_to_tensor
+template<int ...Dims> struct Tensor;
+
+namespace detail {
+
+// seq_to_tensor: convert a val_sequence<size_t, ...> to a Tensor<int, ...> type
+template<typename Seq>
+struct seq_to_tensor;
+
+template<size_t... Vals>
+struct seq_to_tensor<val_sequence<size_t, Vals...>> {
+    using type = Tensor<static_cast<int>(Vals)...>;
+};
+
 } // namespace detail
 
 template<int ...Dims>
@@ -169,7 +240,7 @@ struct Tensor {
     const T* data_ptr() const { return t_.data_ptr<T>(); }
 
     static Tensor arange(float start=0) {
-        return Tensor(torch::arange(start, numel(), 1).view({Dims...}));
+        return Tensor(torch::arange(start, static_cast<float>(numel()), 1).view({Dims...}));
     }
 
     static Tensor randn() {
@@ -235,6 +306,52 @@ struct Tensor {
         return ss.str();
     }
 
+    // transpose<dim0, dim1>(): swap two dimensions at compile time
+    template<size_t dim0, size_t dim1>
+    auto transpose() const {
+        static_assert(dim0 < dim(), "transpose dim0 out of range");
+        static_assert(dim1 < dim(), "transpose dim1 out of range");
+        using new_seq = typename detail::swap_dims<seq_t, dim0, dim1>::type;
+        using result_t = typename detail::seq_to_tensor<new_seq>::type;
+        return result_t{ t_.transpose(dim0, dim1) };
+    }
+
+    // reshape<NewDims...>(): reshape with compile-time numel check
+    template<int ...NewDims>
+    Tensor<NewDims...> reshape() const {
+        static_assert(numel() == Tensor<NewDims...>::numel(),
+            "reshape: number of elements must match");
+        return Tensor<NewDims...>{ t_.reshape({NewDims...}) };
+    }
+
+    // view<NewDims...>(): alias for reshape with contiguity
+    template<int ...NewDims>
+    Tensor<NewDims...> view() const {
+        static_assert(numel() == Tensor<NewDims...>::numel(),
+            "view: number of elements must match");
+        return Tensor<NewDims...>{ t_.reshape({NewDims...}) };
+    }
+
+    // unsqueeze<D>(): insert a size-1 dimension at position D
+    template<size_t D>
+    auto unsqueeze() const {
+        static_assert(D <= dim(), "unsqueeze dim out of range");
+        using new_seq = typename detail::insert_dim<seq_t, D, size_t(1)>::type;
+        using result_t = typename detail::seq_to_tensor<new_seq>::type;
+        return result_t{ t_.unsqueeze(D) };
+    }
+
+    // squeeze<D>(): remove a size-1 dimension at position D
+    template<size_t D>
+    auto squeeze() const {
+        static_assert(D < dim(), "squeeze dim out of range");
+        static_assert(seq_t::template get<D>::value == 1,
+            "squeeze: dimension must be size 1");
+        using new_seq = typename detail::remove_dim<seq_t, D>::type;
+        using result_t = typename detail::seq_to_tensor<new_seq>::type;
+        return result_t{ t_.squeeze(D) };
+    }
+
     private:
     torch::Tensor t_;
 };
@@ -266,6 +383,42 @@ operator/(ftype f, Tensor<Dims...> t) {
 
 using Scalar = Tensor<>;
 
+// matmul: 2D case Tensor<M,K> x Tensor<K,N> -> Tensor<M,N>
+template<int M, int K, int N>
+Tensor<M, N> matmul(Tensor<M, K> a, Tensor<K, N> b) {
+    return Tensor<M, N>{ torch::matmul(a.t(), b.t()) };
+}
+
+// matmul: batched 3D case Tensor<B,M,K> x Tensor<B,K,N> -> Tensor<B,M,N>
+template<int B, int M, int K, int N>
+Tensor<B, M, N> matmul(Tensor<B, M, K> a, Tensor<B, K, N> b) {
+    return Tensor<B, M, N>{ torch::matmul(a.t(), b.t()) };
+}
+
+namespace functional {
+
+// cat<Dim>(a, b): concatenate two tensors along dimension Dim
+// All dimensions must match except at Dim, where they are summed.
+template<size_t Dim, int ...DimsA, int ...DimsB>
+auto cat(Tensor<DimsA...> a, Tensor<DimsB...> b) {
+    using SeqA = typename Tensor<DimsA...>::seq_t;
+    using SeqB = typename Tensor<DimsB...>::seq_t;
+    static_assert(SeqA::length == SeqB::length, "cat: tensors must have same number of dimensions");
+    static_assert(Dim < SeqA::length, "cat: dim out of range");
+
+    // Check all dims match except Dim (done via constexpr helper)
+    constexpr auto check_dims = []<size_t... Is>(std::index_sequence<Is...>) {
+        return ((Is == Dim || SeqA::template get<Is>::value == SeqB::template get<Is>::value) && ...);
+    }(std::make_index_sequence<SeqA::length>{});
+    static_assert(check_dims, "cat: all dimensions except cat dim must match");
+
+    constexpr size_t new_dim_val = SeqA::template get<Dim>::value + SeqB::template get<Dim>::value;
+    using new_seq = typename detail::replace_dim<SeqA, Dim, new_dim_val>::type;
+    using result_t = typename detail::seq_to_tensor<new_seq>::type;
+    return result_t{ torch::cat({a.t(), b.t()}, Dim) };
+}
+
+} // namespace functional (cat)
 
 template<typename InputTensorType, typename OutputTensorType>
 class Module : public torch::nn::Module {
@@ -429,6 +582,17 @@ project(Tensor<B, Length> input, Tensor<DictionarySize, EmbeddingDim> weights) {
 }
 namespace detail {
 
+// Helper to convert tuple to array (must be before ReduceDims specializations)
+template<typename T, typename Tuple, std::size_t... Is>
+constexpr auto tuple_to_array_impl(const Tuple& t, std::index_sequence<Is...>) {
+    return std::array<T, sizeof...(Is)>{(T)std::get<Is>(t)...};
+}
+
+template<typename T, typename Tuple>
+constexpr auto tuple_to_array(const Tuple& t) {
+    return tuple_to_array_impl<T>(t, std::make_index_sequence<std::tuple_size_v<Tuple>>{});
+}
+
 // No dims to reduce over and keepdim=false? -> return a Scalar
 template<typename TensorType>
 struct ReduceDims<TensorType, false> {
@@ -528,17 +692,6 @@ public:
     constexpr static auto dims_array = tuple_to_array<int64_t>(tensor_t::sizes());
     constexpr static auto dims = torch::IntArrayRef(dims_array);
 };
-
-// Helper to convert tuple to array
-template<typename T, typename Tuple, std::size_t... Is>
-constexpr auto tuple_to_array_impl(const Tuple& t, std::index_sequence<Is...>) {
-    return std::array<T, sizeof...(Is)>{(T)std::get<Is>(t)...};
-}
-
-template<typename T, typename Tuple>
-constexpr auto tuple_to_array(const Tuple& t) {
-    return tuple_to_array_impl<T>(t, std::make_index_sequence<std::tuple_size_v<Tuple>>{});
-}
 
 }
 
