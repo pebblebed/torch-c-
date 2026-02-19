@@ -899,3 +899,149 @@ TEST(TensorTest, GRU_multi_layer) {
     EXPECT_TRUE(output.compare_sizes(torch::IntArrayRef{3, 7, 16}));
     EXPECT_TRUE(h_n.compare_sizes(torch::IntArrayRef{3, 3, 16}));
 }
+
+// ============================================================
+// Wave 4: Integration tests — end-to-end small models
+// ============================================================
+
+TEST(IntegrationTest, ConvNet_MNIST) {
+    // Simple ConvNet (MNIST-style):
+    // Conv2d(1->16, 5x5) -> relu -> MaxPool2d(2x2) -> Conv2d(16->32, 5x5) -> relu -> Flatten -> Linear
+    // Input: Tensor<1, 1, 28, 28> (batch=1, channels=1, 28x28)
+
+    // Conv2d layer 1: 1 input channel, 16 output channels, 5x5 kernel
+    // Output: (28 - 5 + 1) = 24 -> Tensor<1, 16, 24, 24>
+    auto conv1_weight = Tensor<16, 1, 5, 5>::randn();
+
+    // MaxPool2d: 2x2 kernel, stride 2
+    // Output: (24 - 2) / 2 + 1 = 12 -> Tensor<1, 16, 12, 12>
+
+    // Conv2d layer 2: 16 input channels, 32 output channels, 5x5 kernel
+    // Output: (12 - 5 + 1) = 8 -> Tensor<1, 32, 8, 8>
+    auto conv2_weight = Tensor<32, 16, 5, 5>::randn();
+
+    // Flatten dims 1-3: Tensor<1, 32*8*8> = Tensor<1, 2048>
+    // Linear: 2048 -> 10 (10 classes)
+    trails::nn::Linear<1, 2048, 10> fc;
+
+    // Forward pass
+    auto input = Tensor<1, 1, 28, 28>::randn();
+
+    // Conv1 + relu
+    auto x = F::conv2d(input, conv1_weight);
+    EXPECT_TRUE(x.compare_sizes(torch::IntArrayRef{1, 16, 24, 24}));
+    auto x_relu1 = F::relu(x);
+
+    // MaxPool2d
+    auto x_pool = F::max_pool2d<2, 2, 2, 2>(x_relu1);
+    EXPECT_TRUE(x_pool.compare_sizes(torch::IntArrayRef{1, 16, 12, 12}));
+
+    // Conv2 + relu
+    auto x2 = F::conv2d(x_pool, conv2_weight);
+    EXPECT_TRUE(x2.compare_sizes(torch::IntArrayRef{1, 32, 8, 8}));
+    auto x_relu2 = F::relu(x2);
+
+    // Flatten
+    auto x_flat = F::flatten<1, 3>(x_relu2);
+    EXPECT_TRUE(x_flat.compare_sizes(torch::IntArrayRef{1, 2048}));
+
+    // Linear classifier
+    auto output = fc.forward(x_flat);
+    EXPECT_TRUE(output.compare_sizes(torch::IntArrayRef{1, 10}));
+
+    // Verify softmax produces valid probabilities
+    auto probs = output.softmax<1>();
+    auto sum = probs.t().sum(1);
+    EXPECT_TRUE(torch::allclose(sum, torch::ones({1}), 1e-5, 1e-5));
+}
+
+TEST(IntegrationTest, RNN_TextClassification) {
+    // Simple RNN (text classification):
+    // Embedding -> LSTM -> take last hidden -> Linear
+    // Input: Tensor<2, 10> (batch=2, seq_len=10, long indices)
+
+    constexpr int B = 2;
+    constexpr int SeqLen = 10;
+    constexpr int VocabSize = 50;
+    constexpr int EmbedDim = 32;
+    constexpr int HiddenSize = 64;
+    constexpr int NumClasses = 5;
+
+    trails::nn::Embedding<VocabSize, EmbedDim> emb;
+    trails::nn::LSTM<B, SeqLen, EmbedDim, HiddenSize, 1> lstm;
+    trails::nn::Linear<B, HiddenSize, NumClasses> classifier;
+
+    // Input: random integer indices in [0, VocabSize)
+    auto indices = Tensor<B, SeqLen>(torch::randint(0, VocabSize, {B, SeqLen}, torch::kLong));
+
+    // Embedding: (B, SeqLen) -> (B, SeqLen, EmbedDim)
+    auto embedded = emb.forward(indices);
+    EXPECT_TRUE(embedded.compare_sizes(torch::IntArrayRef{B, SeqLen, EmbedDim}));
+
+    // LSTM: (B, SeqLen, EmbedDim) -> output (B, SeqLen, HiddenSize), h_n (1, B, HiddenSize)
+    auto [lstm_out, h_n, c_n] = lstm.forward(embedded);
+    EXPECT_TRUE(lstm_out.compare_sizes(torch::IntArrayRef{B, SeqLen, HiddenSize}));
+    EXPECT_TRUE(h_n.compare_sizes(torch::IntArrayRef{1, B, HiddenSize}));
+
+    // Take last hidden state: h_n is (1, B, HiddenSize), squeeze to (B, HiddenSize)
+    auto last_hidden = Tensor<B, HiddenSize>(h_n.t().squeeze(0));
+    EXPECT_TRUE(last_hidden.compare_sizes(torch::IntArrayRef{B, HiddenSize}));
+
+    // Linear classifier: (B, HiddenSize) -> (B, NumClasses)
+    auto logits = classifier.forward(last_hidden);
+    EXPECT_TRUE(logits.compare_sizes(torch::IntArrayRef{B, NumClasses}));
+
+    // Verify softmax produces valid probabilities per batch element
+    auto probs = logits.softmax<1>();
+    auto sums = probs.t().sum(1);
+    EXPECT_TRUE(torch::allclose(sums, torch::ones({B}), 1e-5, 1e-5));
+}
+
+TEST(IntegrationTest, TransformerEncoderBlock) {
+    // Transformer encoder block:
+    // MultiHeadAttention -> residual + LayerNorm -> FFN (Linear+relu+Linear) -> residual + LayerNorm
+    // Input: Tensor<2, 8, 64> (batch=2, seq_len=8, model_dim=64)
+
+    constexpr int B = 2;
+    constexpr int SeqLen = 8;
+    constexpr int ModelDim = 64;
+    constexpr int NumHeads = 4;
+    constexpr int FFDim = 256;
+
+    trails::nn::MultiHeadAttention<B, SeqLen, NumHeads, ModelDim> mha;
+    trails::nn::LayerNorm<B, SeqLen, ModelDim> ln1;
+    trails::nn::LayerNorm<B, SeqLen, ModelDim> ln2;
+
+    // FFN weights
+    auto ff_w1 = Tensor<FFDim, ModelDim>::randn();
+    auto ff_b1 = Tensor<FFDim>::randn();
+    auto ff_w2 = Tensor<ModelDim, FFDim>::randn();
+    auto ff_b2 = Tensor<ModelDim>::randn();
+
+    auto input = Tensor<B, SeqLen, ModelDim>::randn();
+
+    // Self-attention sublayer
+    auto attn_out = mha.forward(input);
+    EXPECT_TRUE(attn_out.compare_sizes(torch::IntArrayRef{B, SeqLen, ModelDim}));
+
+    // Residual connection + LayerNorm
+    auto x1 = ln1.forward(attn_out + input);
+    EXPECT_TRUE(x1.compare_sizes(torch::IntArrayRef{B, SeqLen, ModelDim}));
+
+    // Feedforward sublayer: Linear(64->256) -> relu -> Linear(256->64)
+    auto ff_hidden = F::linear(x1, ff_w1, std::optional{ff_b1});
+    EXPECT_TRUE(ff_hidden.compare_sizes(torch::IntArrayRef{B, SeqLen, FFDim}));
+
+    auto ff_relu = F::relu(ff_hidden);
+    EXPECT_TRUE(ff_relu.compare_sizes(torch::IntArrayRef{B, SeqLen, FFDim}));
+
+    auto ff_out = F::linear(ff_relu, ff_w2, std::optional{ff_b2});
+    EXPECT_TRUE(ff_out.compare_sizes(torch::IntArrayRef{B, SeqLen, ModelDim}));
+
+    // Residual connection + LayerNorm
+    auto output = ln2.forward(ff_out + x1);
+    EXPECT_TRUE(output.compare_sizes(torch::IntArrayRef{B, SeqLen, ModelDim}));
+
+    // Verify output is finite (no NaN/Inf from the attention computation)
+    EXPECT_TRUE(torch::isfinite(output.t()).all().item<bool>());
+}

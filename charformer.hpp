@@ -53,20 +53,36 @@ public:
 template <class InTensor, class OutTensor>
 class Linear : public trails::nn::Module<InTensor, OutTensor> {
     nn::Linear layer;
-    static_assert(2 == InTensor::dim);
-    static_assert(2 == OutTensor::dim);
-    constexpr static int in_dims = std::get<1>(InTensor::size);
-    constexpr static int out_dims = std::get<1>(OutTensor::size);
+    static_assert(2 == InTensor::dim(), "Linear: input must be 2D (B, InDim)");
+    static_assert(2 == OutTensor::dim(), "Linear: output must be 2D (B, OutDim)");
+    constexpr static int in_dims = std::get<1>(InTensor::shape);
+    constexpr static int out_dims = std::get<1>(OutTensor::shape);
 
 public:
     Linear()
     : layer(in_dims, out_dims) { }
 
-    OutTensor forward(InTensor x) {
-        return layer(x);
+    OutTensor forward(InTensor x) override {
+        return OutTensor(layer->forward(x.t()));
     }
 };
 
+/*
+ * SelfAttention, ReLU, FeedForward, TransformerEncoderLayer — disabled (old untyped code).
+ *
+ * To revive these, they need to be rewritten using the typed Trails API:
+ *   - SelfAttention: replaced by trails::nn::MultiHeadAttention<B, SeqLen, NumHeads, ModelDim>
+ *     which provides compile-time shape-checked multi-head attention.
+ *   - ReLU: use trails::functional::relu or Tensor::relu() instead.
+ *   - FeedForward: rewrite using trails::nn::Linear and trails::functional::relu
+ *     with proper typed tensor dimensions (the old code uses untyped torch::nn modules
+ *     and has undefined template parameters B, Dim, OutDim, NLayers).
+ *   - TransformerEncoderLayer: rewrite using trails::nn::MultiHeadAttention,
+ *     trails::nn::LayerNorm, and typed feedforward layers. The old ResNorm template
+ *     args also need updating.
+ *   - CharFormer: rewrite using trails::nn::Embedding, typed TransformerEncoderLayer,
+ *     and trails::nn::Linear. The old code uses untyped torch::nn modules throughout.
+ */
 #if 0
 template <
     int B,
@@ -142,14 +158,15 @@ public:
         return c;
     }
 };
+#endif
 
 using namespace torch::indexing;
 
 torch::Tensor positional_encoding(int64_t seq_length, int64_t hidden_dim) {
     auto position = torch::arange(0, seq_length, torch::kFloat32).unsqueeze(1);
-    auto div_term = torch::exp(torch::arange(0, hidden_dim, 2, torch::kFloat32) * 
+    auto div_term = torch::exp(torch::arange(0, hidden_dim, 2, torch::kFloat32) *
                                (-std::log(10000.0) / hidden_dim));
-    
+
     auto pe = torch::zeros({seq_length, hidden_dim});
     pe.index_put_({Slice(), Slice(0, None, 2)}, torch::sin(position * div_term));
     pe.index_put_({Slice(), Slice(1, None, 2)}, torch::cos(position * div_term));
@@ -172,6 +189,12 @@ torch::Tensor apply_positional_encoding(torch::Tensor x) {
     return x + pe;
 }
 
+/*
+ * CharFormer — disabled (old untyped code).
+ * To revive, rewrite using trails::nn::Embedding, typed TransformerEncoderLayer,
+ * and trails::nn::Linear with proper compile-time shape checking.
+ */
+#if 0
 template <int NEmbeddings, int Dim, int NHeads, int NLayers>
 class CharFormer : public nn::Module {
     nn::Embedding emb;
