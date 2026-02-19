@@ -3,6 +3,7 @@
 #include <cmath>
 
 #include "../charformer.hpp"
+#include "../trails_nn.hpp"
 
 using namespace trainium;
 
@@ -60,7 +61,7 @@ TEST(CharformerTests, Linear) {
     constexpr int B = 1;
     constexpr int InDim = 64;
     constexpr int OutDim = 32;
-    trails::Linear<B, InDim, OutDim> linear;
+    trails::nn::Linear<B, InDim, OutDim> linear;
     auto x = torch::randn({B, InDim});
     auto y = linear.forward(x);
     EXPECT_EQ(y.dim(), 2);
@@ -113,7 +114,7 @@ TEST(CharformerTests, MultiHeadAttention) {
     constexpr int L = 16;
     constexpr int H = 4;
     constexpr int D = 64;
-    trails::MultiHeadAttention<B, L, H, D> mha;
+    trails::nn::MultiHeadAttention<B, L, H, D> mha;
     auto x = trails::Tensor<B, L, D>::randn();
     auto y = mha.forward(x);
     EXPECT_TRUE(y.compare_sizes(torch::IntArrayRef{B, L, D}));

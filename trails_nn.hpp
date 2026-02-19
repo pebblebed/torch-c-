@@ -1,0 +1,299 @@
+/* Copyright (c) 2024, Pebblebed Management, LLC. All rights reserved.
+ * Author: Keith Adams <kma@pebblebed.com>
+ *
+ * Trails nn module wrappers: typed wrappers around torch.nn modules
+ * with compile-time shape checking.
+ */
+
+#pragma once
+
+#include <torch/torch.h>
+#include "trails.hpp"
+
+namespace trails::nn {
+
+template<typename InputTensorType, typename OutputTensorType>
+class Module : public torch::nn::Module {
+    public:
+    using input_t = InputTensorType;
+    using output_t = OutputTensorType;
+    virtual OutputTensorType forward(InputTensorType input) = 0;
+
+    template<typename T>
+    void register_parameter(std::string name, T value) {
+        torch::nn::Module::register_parameter(name, value.t());
+    }
+
+    OutputTensorType operator()(InputTensorType input) {
+        return forward(input);
+    }
+};
+
+/*
+ * Pipe operator for chaining modules together:
+ *  auto y = x | module1 | module2 | ... | moduleN;
+ */
+template<typename InputTensorType, typename OutputTensorType>
+OutputTensorType operator|(InputTensorType x, Module<InputTensorType, OutputTensorType>& m) {
+    return m.forward(x);
+}
+
+template<typename InputTensorType, typename OutputTensorType,
+      typename ...Layers>
+class Sequential : public Module<InputTensorType, OutputTensorType> {
+    std::tuple<Layers...> layers;
+    public:
+    Sequential(Layers&&... lyrs)
+    : layers(std::forward<Layers>(lyrs)...)
+    {}
+
+    OutputTensorType forward(InputTensorType input) override {
+        return std::apply([&input](auto &&...layers) {
+            auto result = input;
+            ((result = layers.forward(result)), ...);
+            return result; }, layers);
+    }
+};
+
+template<typename InputTensorType, typename OutputTensorType, typename TorchLayerType>
+class TorchWrapperLayer : public Module<InputTensorType, OutputTensorType> {
+    protected:
+    TorchLayerType layer;
+    public:
+    TorchWrapperLayer(TorchLayerType& lyr)
+    : layer(lyr) {}
+
+    TorchWrapperLayer(auto ...args)
+    : layer(args...) {}
+
+    OutputTensorType forward(InputTensorType input) override {
+        return { layer->forward(input.t()) };
+    }
+};
+
+template<
+    int B,
+    int InDim,
+    int OutDim>
+class Linear : public TorchWrapperLayer<Tensor<B, InDim>, Tensor<B, OutDim>, torch::nn::Linear> {
+    public:
+    Linear()
+    : TorchWrapperLayer<Tensor<B, InDim>, Tensor<B, OutDim>, torch::nn::Linear>(
+        torch::nn::Linear(torch::nn::LinearOptions(InDim, OutDim)))
+    {}
+
+    Tensor<B, OutDim> forward(Tensor<B, InDim> input) override {
+        return { TorchWrapperLayer<Tensor<B, InDim>, Tensor<B, OutDim>, torch::nn::Linear>::layer->forward(input.t()).reshape({B, OutDim}) };
+    }
+};
+
+/*
+ * LayerNorm: wraps torch::nn::LayerNorm.
+ * Normalizes over the last sizeof...(Dims) dimensions.
+ * Input/output shape: Tensor<B, Dims...>
+ */
+template<int B, int ...Dims>
+class LayerNorm : public TorchWrapperLayer<Tensor<B, Dims...>, Tensor<B, Dims...>, torch::nn::LayerNorm> {
+    using InputType = Tensor<B, Dims...>;
+    using Base = TorchWrapperLayer<InputType, InputType, torch::nn::LayerNorm>;
+public:
+    LayerNorm()
+    : Base(torch::nn::LayerNorm(torch::nn::LayerNormOptions({Dims...})))
+    {}
+};
+
+/*
+ * BatchNorm1d: wraps torch::nn::BatchNorm1d.
+ * Input/output shape: Tensor<B, C, L>
+ */
+template<int B, int C, int L>
+class BatchNorm1d : public TorchWrapperLayer<Tensor<B, C, L>, Tensor<B, C, L>, torch::nn::BatchNorm1d> {
+    using InputType = Tensor<B, C, L>;
+    using Base = TorchWrapperLayer<InputType, InputType, torch::nn::BatchNorm1d>;
+public:
+    BatchNorm1d()
+    : Base(torch::nn::BatchNorm1d(torch::nn::BatchNormOptions(C)))
+    {}
+};
+
+/*
+ * BatchNorm2d: wraps torch::nn::BatchNorm2d.
+ * Input/output shape: Tensor<B, C, H, W>
+ */
+template<int B, int C, int H, int W>
+class BatchNorm2d : public TorchWrapperLayer<Tensor<B, C, H, W>, Tensor<B, C, H, W>, torch::nn::BatchNorm2d> {
+    using InputType = Tensor<B, C, H, W>;
+    using Base = TorchWrapperLayer<InputType, InputType, torch::nn::BatchNorm2d>;
+public:
+    BatchNorm2d()
+    : Base(torch::nn::BatchNorm2d(torch::nn::BatchNormOptions(C)))
+    {}
+};
+
+/*
+ * Embedding: wraps torch::nn::Embedding.
+ * Maps integer indices to dense vectors.
+ * Input: Tensor<B, SeqLen> (long/int indices) -> Output: Tensor<B, SeqLen, EmbedDim>
+ */
+template<int VocabSize, int EmbedDim>
+class Embedding : public torch::nn::Module {
+    torch::nn::Embedding emb;
+public:
+    Embedding()
+    : emb(torch::nn::Embedding(torch::nn::EmbeddingOptions(VocabSize, EmbedDim)))
+    {
+        register_module("emb", emb);
+    }
+
+    template<int B, int SeqLen>
+    Tensor<B, SeqLen, EmbedDim> forward(Tensor<B, SeqLen> input) {
+        return { emb->forward(input.t()) };
+    }
+};
+
+/*
+ * MultiHeadAttention: compile-time shape-checked multi-head attention.
+ * Input/output shape: Tensor<B, SeqLen, ModelDim>
+ * Template params:
+ *   B        - batch size
+ *   SeqLen   - sequence length
+ *   NumHeads - number of attention heads
+ *   ModelDim - model dimension (must be divisible by NumHeads)
+ *
+ * HeadDim = ModelDim / NumHeads (computed at compile time).
+ * Internally projects Q, K, V via linear layers, reshapes to
+ * (B, NumHeads, SeqLen, HeadDim), applies scaled dot-product attention,
+ * then projects output back to ModelDim.
+ */
+template<int B, int SeqLen, int NumHeads, int ModelDim>
+class MultiHeadAttention : public Module<Tensor<B, SeqLen, ModelDim>, Tensor<B, SeqLen, ModelDim>> {
+    static_assert(ModelDim % NumHeads == 0,
+        "MultiHeadAttention: ModelDim must be divisible by NumHeads");
+    static constexpr int HeadDim = ModelDim / NumHeads;
+
+    using InputType = Tensor<B, SeqLen, ModelDim>;
+
+    // Q, K, V projections: (B*SeqLen, ModelDim) -> (B*SeqLen, ModelDim)
+    torch::nn::Linear Wq, Wk, Wv, Wo;
+
+public:
+    MultiHeadAttention()
+    : Wq(torch::nn::Linear(torch::nn::LinearOptions(ModelDim, ModelDim)))
+    , Wk(torch::nn::Linear(torch::nn::LinearOptions(ModelDim, ModelDim)))
+    , Wv(torch::nn::Linear(torch::nn::LinearOptions(ModelDim, ModelDim)))
+    , Wo(torch::nn::Linear(torch::nn::LinearOptions(ModelDim, ModelDim)))
+    {
+        torch::nn::Module::register_module("Wq", Wq);
+        torch::nn::Module::register_module("Wk", Wk);
+        torch::nn::Module::register_module("Wv", Wv);
+        torch::nn::Module::register_module("Wo", Wo);
+    }
+
+    InputType forward(InputType input) override {
+        // input: (B, SeqLen, ModelDim)
+        auto x = input.t();
+
+        // Project Q, K, V: each (B, SeqLen, ModelDim)
+        auto q = Wq->forward(x).reshape({B, SeqLen, NumHeads, HeadDim}).transpose(1, 2);
+        auto k = Wk->forward(x).reshape({B, SeqLen, NumHeads, HeadDim}).transpose(1, 2);
+        auto v = Wv->forward(x).reshape({B, SeqLen, NumHeads, HeadDim}).transpose(1, 2);
+        // q, k, v are now (B, NumHeads, SeqLen, HeadDim)
+
+        // Typed tensors for scaled_dot_product_attention
+        using QKV = Tensor<B, NumHeads, SeqLen, HeadDim>;
+        auto Q = QKV(q);
+        auto K = QKV(k);
+        auto V = QKV(v);
+
+        // Scaled dot-product attention
+        auto attn_out = trails::scaled_dot_product_attention(Q, K, V);
+        // attn_out: (B, NumHeads, SeqLen, HeadDim)
+
+        // Reshape back: (B, SeqLen, ModelDim)
+        auto concat = attn_out.t().transpose(1, 2).contiguous().reshape({B, SeqLen, ModelDim});
+
+        // Output projection
+        return InputType(Wo->forward(concat));
+    }
+};
+
+/*
+ * RNN: wraps torch::nn::RNN with compile-time shape checking.
+ * Uses batch_first=true. Input: Tensor<B, SeqLen, InputSize>
+ * Returns: {output: Tensor<B, SeqLen, HiddenSize>, h_n: Tensor<NumLayers, B, HiddenSize>}
+ */
+template<int B, int SeqLen, int InputSize, int HiddenSize, int NumLayers = 1>
+class RNN : public torch::nn::Module {
+    torch::nn::RNN rnn_;
+public:
+    using output_t = Tensor<B, SeqLen, HiddenSize>;
+    using hidden_t = Tensor<NumLayers, B, HiddenSize>;
+
+    RNN()
+    : rnn_(torch::nn::RNNOptions(InputSize, HiddenSize)
+           .num_layers(NumLayers).batch_first(true))
+    {
+        register_module("rnn", rnn_);
+    }
+
+    std::tuple<output_t, hidden_t> forward(Tensor<B, SeqLen, InputSize> input) {
+        auto [output, h_n] = rnn_->forward(input.t());
+        return { output_t{output}, hidden_t{h_n} };
+    }
+};
+
+/*
+ * LSTM: wraps torch::nn::LSTM with compile-time shape checking.
+ * Uses batch_first=true. Input: Tensor<B, SeqLen, InputSize>
+ * Returns: {output: Tensor<B, SeqLen, HiddenSize>,
+ *           h_n: Tensor<NumLayers, B, HiddenSize>,
+ *           c_n: Tensor<NumLayers, B, HiddenSize>}
+ */
+template<int B, int SeqLen, int InputSize, int HiddenSize, int NumLayers = 1>
+class LSTM : public torch::nn::Module {
+    torch::nn::LSTM lstm_;
+public:
+    using output_t = Tensor<B, SeqLen, HiddenSize>;
+    using hidden_t = Tensor<NumLayers, B, HiddenSize>;
+
+    LSTM()
+    : lstm_(torch::nn::LSTMOptions(InputSize, HiddenSize)
+            .num_layers(NumLayers).batch_first(true))
+    {
+        register_module("lstm", lstm_);
+    }
+
+    std::tuple<output_t, hidden_t, hidden_t> forward(Tensor<B, SeqLen, InputSize> input) {
+        auto [output, hidden_tuple] = lstm_->forward(input.t());
+        auto [h_n, c_n] = hidden_tuple;
+        return { output_t{output}, hidden_t{h_n}, hidden_t{c_n} };
+    }
+};
+
+/*
+ * GRU: wraps torch::nn::GRU with compile-time shape checking.
+ * Uses batch_first=true. Input: Tensor<B, SeqLen, InputSize>
+ * Returns: {output: Tensor<B, SeqLen, HiddenSize>, h_n: Tensor<NumLayers, B, HiddenSize>}
+ */
+template<int B, int SeqLen, int InputSize, int HiddenSize, int NumLayers = 1>
+class GRU : public torch::nn::Module {
+    torch::nn::GRU gru_;
+public:
+    using output_t = Tensor<B, SeqLen, HiddenSize>;
+    using hidden_t = Tensor<NumLayers, B, HiddenSize>;
+
+    GRU()
+    : gru_(torch::nn::GRUOptions(InputSize, HiddenSize)
+           .num_layers(NumLayers).batch_first(true))
+    {
+        register_module("gru", gru_);
+    }
+
+    std::tuple<output_t, hidden_t> forward(Tensor<B, SeqLen, InputSize> input) {
+        auto [output, h_n] = gru_->forward(input.t());
+        return { output_t{output}, hidden_t{h_n} };
+    }
+};
+
+} // namespace trails::nn
+

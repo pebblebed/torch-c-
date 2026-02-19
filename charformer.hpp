@@ -2,11 +2,13 @@
 #include <cassert>
 #include <torch/torch.h>
 #include "trails.hpp"
+#include "trails_nn.hpp"
 
 namespace trainium {
 
 namespace nn = torch::nn;
 using namespace trails;
+using namespace trails::nn;
 
 template<
     int B,
@@ -35,7 +37,7 @@ template<
     typename InputOutput,
     template<typename, typename> class InnerLayer,
     typename Norm=RMSNorm<std::get<0>(InputOutput::size)>>
-class ResNorm : public trails::Module<InputOutput, InputOutput> {
+class ResNorm : public trails::nn::Module<InputOutput, InputOutput> {
     using TensorType = InputOutput;
     InnerLayer<InputOutput, InputOutput> layer;
     Norm norm;
@@ -49,7 +51,7 @@ public:
  * Linear layer, assumes batch-first.
  */
 template <class InTensor, class OutTensor>
-class Linear : public trails::Module<InTensor, OutTensor> {
+class Linear : public trails::nn::Module<InTensor, OutTensor> {
     nn::Linear layer;
     static_assert(2 == InTensor::dim);
     static_assert(2 == OutTensor::dim);
@@ -96,7 +98,7 @@ public:
 };
 
 template <typename InputOutput>
-class ReLU : public trails::Module<InputOutput, InputOutput> {
+class ReLU : public trails::nn::Module<InputOutput, InputOutput> {
     using TensorType = InputOutput;
 public:
     TensorType forward(TensorType x) override {
@@ -107,7 +109,7 @@ public:
 template <
     typename Activation=nn::ReLU,
     typename ...Modules>
-class FeedForward : public trails::Module<B, Dim, OutDim> {
+class FeedForward : public trails::nn::Module<B, Dim, OutDim> {
     Modules... modules;
 public:
     FeedForward() {

@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include <torch/torch.h>
 #include "../trails.hpp"
+#include "../trails_nn.hpp"
 
 using namespace trails;
 using namespace trails::detail;
@@ -562,7 +563,7 @@ TEST(TensorTest, sqrt_shape_and_values) {
 
 
 TEST(TensorTest, LayerNorm) {
-    trails::LayerNorm<2, 3, 4> ln;
+    trails::nn::LayerNorm<2, 3, 4> ln;
     auto x = Tensor<2, 3, 4>::randn();
     auto y = ln.forward(x);
     EXPECT_TRUE(y.compare_sizes(torch::IntArrayRef{2, 3, 4}));
@@ -573,7 +574,7 @@ TEST(TensorTest, LayerNorm) {
 }
 
 TEST(TensorTest, BatchNorm1d) {
-    trails::BatchNorm1d<2, 3, 4> bn;
+    trails::nn::BatchNorm1d<2, 3, 4> bn;
     bn.eval();
     auto x = Tensor<2, 3, 4>::randn();
     auto y = bn.forward(x);
@@ -585,7 +586,7 @@ TEST(TensorTest, BatchNorm1d) {
 }
 
 TEST(TensorTest, BatchNorm2d) {
-    trails::BatchNorm2d<2, 3, 4, 5> bn;
+    trails::nn::BatchNorm2d<2, 3, 4, 5> bn;
     bn.eval();
     auto x = Tensor<2, 3, 4, 5>::randn();
     auto y = bn.forward(x);
@@ -673,7 +674,7 @@ TEST(TensorTest, avg_pool2d_asymmetric) {
 TEST(TensorTest, Embedding_basic) {
     // VocabSize=100, EmbedDim=32
     // Input: Tensor<2, 5> of integer indices -> Output: Tensor<2, 5, 32>
-    trails::Embedding<100, 32> emb;
+    trails::nn::Embedding<100, 32> emb;
     auto indices = Tensor<2, 5>(torch::randint(0, 100, {2, 5}, torch::kLong));
     auto output = emb.forward(indices);
     EXPECT_TRUE(output.compare_sizes(torch::IntArrayRef{2, 5, 32}));
@@ -681,7 +682,7 @@ TEST(TensorTest, Embedding_basic) {
 
 TEST(TensorTest, Embedding_single_batch) {
     // VocabSize=10, EmbedDim=4
-    trails::Embedding<10, 4> emb;
+    trails::nn::Embedding<10, 4> emb;
     auto indices = Tensor<1, 3>(torch::randint(0, 10, {1, 3}, torch::kLong));
     auto output = emb.forward(indices);
     EXPECT_TRUE(output.compare_sizes(torch::IntArrayRef{1, 3, 4}));
@@ -817,7 +818,7 @@ TEST(TensorTest, scaled_dot_product_attention_scaling) {
 TEST(TensorTest, MultiHeadAttention_shape) {
     // B=2, SeqLen=8, NumHeads=2, ModelDim=16
     // HeadDim = ModelDim / NumHeads = 8
-    trails::MultiHeadAttention<2, 8, 2, 16> mha;
+    trails::nn::MultiHeadAttention<2, 8, 2, 16> mha;
     auto x = Tensor<2, 8, 16>::randn();
     auto y = mha.forward(x);
     EXPECT_TRUE(y.compare_sizes(torch::IntArrayRef{2, 8, 16}));
@@ -825,7 +826,7 @@ TEST(TensorTest, MultiHeadAttention_shape) {
 
 TEST(TensorTest, MultiHeadAttention_single_head) {
     // B=1, SeqLen=4, NumHeads=1, ModelDim=8
-    trails::MultiHeadAttention<1, 4, 1, 8> mha;
+    trails::nn::MultiHeadAttention<1, 4, 1, 8> mha;
     auto x = Tensor<1, 4, 8>::randn();
     auto y = mha.forward(x);
     EXPECT_TRUE(y.compare_sizes(torch::IntArrayRef{1, 4, 8}));
@@ -833,7 +834,7 @@ TEST(TensorTest, MultiHeadAttention_single_head) {
 
 TEST(TensorTest, MultiHeadAttention_multi_head) {
     // B=2, SeqLen=6, NumHeads=4, ModelDim=32
-    trails::MultiHeadAttention<2, 6, 4, 32> mha;
+    trails::nn::MultiHeadAttention<2, 6, 4, 32> mha;
     auto x = Tensor<2, 6, 32>::randn();
     auto y = mha.forward(x);
     EXPECT_TRUE(y.compare_sizes(torch::IntArrayRef{2, 6, 32}));
@@ -845,7 +846,7 @@ TEST(TensorTest, MultiHeadAttention_multi_head) {
 
 TEST(TensorTest, RNN_basic) {
     // B=2, SeqLen=5, InputSize=10, HiddenSize=20, NumLayers=1
-    trails::RNN<2, 5, 10, 20, 1> rnn;
+    trails::nn::RNN<2, 5, 10, 20, 1> rnn;
     auto x = Tensor<2, 5, 10>::randn();
     auto [output, h_n] = rnn.forward(x);
     EXPECT_TRUE(output.compare_sizes(torch::IntArrayRef{2, 5, 20}));
@@ -854,7 +855,7 @@ TEST(TensorTest, RNN_basic) {
 
 TEST(TensorTest, RNN_multi_layer) {
     // B=3, SeqLen=7, InputSize=8, HiddenSize=16, NumLayers=3
-    trails::RNN<3, 7, 8, 16, 3> rnn;
+    trails::nn::RNN<3, 7, 8, 16, 3> rnn;
     auto x = Tensor<3, 7, 8>::randn();
     auto [output, h_n] = rnn.forward(x);
     EXPECT_TRUE(output.compare_sizes(torch::IntArrayRef{3, 7, 16}));
@@ -863,7 +864,7 @@ TEST(TensorTest, RNN_multi_layer) {
 
 TEST(TensorTest, LSTM_basic) {
     // B=2, SeqLen=5, InputSize=10, HiddenSize=20, NumLayers=1
-    trails::LSTM<2, 5, 10, 20, 1> lstm;
+    trails::nn::LSTM<2, 5, 10, 20, 1> lstm;
     auto x = Tensor<2, 5, 10>::randn();
     auto [output, h_n, c_n] = lstm.forward(x);
     EXPECT_TRUE(output.compare_sizes(torch::IntArrayRef{2, 5, 20}));
@@ -873,7 +874,7 @@ TEST(TensorTest, LSTM_basic) {
 
 TEST(TensorTest, LSTM_multi_layer) {
     // B=4, SeqLen=6, InputSize=12, HiddenSize=24, NumLayers=2
-    trails::LSTM<4, 6, 12, 24, 2> lstm;
+    trails::nn::LSTM<4, 6, 12, 24, 2> lstm;
     auto x = Tensor<4, 6, 12>::randn();
     auto [output, h_n, c_n] = lstm.forward(x);
     EXPECT_TRUE(output.compare_sizes(torch::IntArrayRef{4, 6, 24}));
@@ -883,7 +884,7 @@ TEST(TensorTest, LSTM_multi_layer) {
 
 TEST(TensorTest, GRU_basic) {
     // B=2, SeqLen=5, InputSize=10, HiddenSize=20, NumLayers=1
-    trails::GRU<2, 5, 10, 20, 1> gru;
+    trails::nn::GRU<2, 5, 10, 20, 1> gru;
     auto x = Tensor<2, 5, 10>::randn();
     auto [output, h_n] = gru.forward(x);
     EXPECT_TRUE(output.compare_sizes(torch::IntArrayRef{2, 5, 20}));
@@ -892,7 +893,7 @@ TEST(TensorTest, GRU_basic) {
 
 TEST(TensorTest, GRU_multi_layer) {
     // B=3, SeqLen=7, InputSize=8, HiddenSize=16, NumLayers=3
-    trails::GRU<3, 7, 8, 16, 3> gru;
+    trails::nn::GRU<3, 7, 8, 16, 3> gru;
     auto x = Tensor<3, 7, 8>::randn();
     auto [output, h_n] = gru.forward(x);
     EXPECT_TRUE(output.compare_sizes(torch::IntArrayRef{3, 7, 16}));
