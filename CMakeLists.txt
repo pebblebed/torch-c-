@@ -11,6 +11,9 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
 add_executable(trainium "trainium.cpp" "dataset_dir.cpp")
 target_link_libraries(trainium "${TORCH_LIBRARIES}")
 
+add_executable(hello_trails "hello-trails.cpp")
+target_link_libraries(hello_trails "${TORCH_LIBRARIES}")
+
 if (MSVC)
     file(GLOB TORCH_DLLS "${TORCH_INSTALL_PREFIX}/lib/*.dll")
     add_custom_command(TARGET trainium
