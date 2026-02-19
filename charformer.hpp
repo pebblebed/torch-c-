@@ -19,10 +19,15 @@ public:
     : gamma(torch::nn::Module::register_parameter("gamma", torch::ones({1, Dims...}))) {}
 
     TensorType forward(TensorType x) {
-        auto variance = x.square().mean();
-        auto rms = variance.rsqrt() + 1e-6;
-        auto y  = x * rms;
-        return y * gamma.t();
+        auto xt = x.t();
+        // Reduce over all non-batch dimensions (1..sizeof...(Dims)), keepdim for broadcasting
+        std::vector<int64_t> reduce_dims;
+        for (int64_t i = 1; i <= (int64_t)sizeof...(Dims); i++) {
+            reduce_dims.push_back(i);
+        }
+        auto variance = (xt * xt).mean(reduce_dims, /*keepdim=*/true);
+        auto rms = (variance + 1e-6).rsqrt();
+        return TensorType(xt * rms * gamma.t());
     }
 };
 

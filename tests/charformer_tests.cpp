@@ -29,7 +29,6 @@ TEST(CharformerTests, ApplyPosEncoding) {
 #endif
 
 TEST(CharformerTests, RMSNorm) {
-#if 0
     constexpr int B = 1;
     constexpr int D = 3;
     auto norm = RMSNorm<B, D>();
@@ -55,7 +54,6 @@ TEST(CharformerTests, RMSNorm) {
     EXPECT_EQ(y2.size<2>, 4);
     EXPECT_EQ(y2.size<3>, 7);
     EXPECT_EQ(y2.size<4>, 11);
-#endif
 }
 
 TEST(CharformerTests, Linear) {

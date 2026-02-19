@@ -397,3 +397,202 @@ TEST(TensorTest, cat_3d) {
     auto c = F::cat<2>(a, b);
     EXPECT_TRUE(c.compare_sizes(torch::IntArrayRef{2, 3, 10}));
 }
+
+// ---- Wave 1B: Activation functions and elementwise ops ----
+
+TEST(TensorTest, relu_shape_and_values) {
+    // Shape preservation
+    auto t = Tensor<2, 3>::randn();
+    auto r = t.relu();
+    EXPECT_TRUE(r.compare_sizes(torch::IntArrayRef{2, 3}));
+
+    // Value correctness: relu(x) = max(0, x)
+    auto input = Tensor<2, 3>(torch::tensor({{-1.0f, 0.0f, 1.0f}, {-2.0f, 3.0f, -0.5f}}));
+    auto out = input.relu();
+    auto expected = torch::tensor({{0.0f, 0.0f, 1.0f}, {0.0f, 3.0f, 0.0f}});
+    EXPECT_TRUE(torch::allclose(out.t(), expected));
+
+    // Functional version
+    auto fr = F::relu(input);
+    EXPECT_TRUE(torch::allclose(fr.t(), expected));
+}
+
+TEST(TensorTest, gelu_shape_and_values) {
+    auto t = Tensor<2, 3>::randn();
+    auto g = t.gelu();
+    EXPECT_TRUE(g.compare_sizes(torch::IntArrayRef{2, 3}));
+
+    // GELU(0) = 0
+    auto zeros = Tensor<2, 3>::zeroes();
+    auto gz = zeros.gelu();
+    EXPECT_TRUE(torch::allclose(gz.t(), torch::zeros({2, 3}), 1e-5, 1e-5));
+
+    // Functional version
+    auto fg = F::gelu(t);
+    EXPECT_TRUE(fg.compare_sizes(torch::IntArrayRef{2, 3}));
+}
+
+TEST(TensorTest, sigmoid_shape_and_values) {
+    auto t = Tensor<2, 3>::randn();
+    auto s = t.sigmoid();
+    EXPECT_TRUE(s.compare_sizes(torch::IntArrayRef{2, 3}));
+
+    // sigmoid(0) = 0.5
+    auto zeros = Tensor<2, 3>::zeroes();
+    auto sz = zeros.sigmoid();
+    auto expected = torch::ones({2, 3}) * 0.5f;
+    EXPECT_TRUE(torch::allclose(sz.t(), expected, 1e-5, 1e-5));
+
+    // Functional version
+    auto fs = F::sigmoid(t);
+    EXPECT_TRUE(fs.compare_sizes(torch::IntArrayRef{2, 3}));
+}
+
+TEST(TensorTest, tanh_shape_and_values) {
+    auto t = Tensor<2, 3>::randn();
+    auto th = t.tanh();
+    EXPECT_TRUE(th.compare_sizes(torch::IntArrayRef{2, 3}));
+
+    // tanh(0) = 0
+    auto zeros = Tensor<2, 3>::zeroes();
+    auto tz = zeros.tanh();
+    EXPECT_TRUE(torch::allclose(tz.t(), torch::zeros({2, 3}), 1e-5, 1e-5));
+
+    // Functional version
+    auto ft = F::tanh(t);
+    EXPECT_TRUE(ft.compare_sizes(torch::IntArrayRef{2, 3}));
+}
+
+TEST(TensorTest, softmax_shape_and_values) {
+    auto t = Tensor<2, 3>::randn();
+    auto s = t.softmax<1>();
+    EXPECT_TRUE(s.compare_sizes(torch::IntArrayRef{2, 3}));
+
+    // softmax sums to 1 along dim 1
+    auto sums = s.t().sum(1);
+    EXPECT_TRUE(torch::allclose(sums, torch::ones({2}), 1e-5, 1e-5));
+
+    // softmax along dim 0
+    auto s0 = t.softmax<0>();
+    EXPECT_TRUE(s0.compare_sizes(torch::IntArrayRef{2, 3}));
+    auto sums0 = s0.t().sum(0);
+    EXPECT_TRUE(torch::allclose(sums0, torch::ones({3}), 1e-5, 1e-5));
+
+    // Functional version
+    auto fs = F::softmax<1>(t);
+    EXPECT_TRUE(torch::allclose(fs.t(), s.t()));
+}
+
+TEST(TensorTest, log_softmax_shape_and_values) {
+    auto t = Tensor<2, 3>::randn();
+    auto ls = t.log_softmax<1>();
+    EXPECT_TRUE(ls.compare_sizes(torch::IntArrayRef{2, 3}));
+
+    // exp(log_softmax) should sum to 1
+    auto exp_ls = ls.t().exp().sum(1);
+    EXPECT_TRUE(torch::allclose(exp_ls, torch::ones({2}), 1e-5, 1e-5));
+
+    // log_softmax values should all be <= 0
+    EXPECT_TRUE((ls.t() <= 0).all().item<bool>());
+
+    // Functional version
+    auto fls = F::log_softmax<1>(t);
+    EXPECT_TRUE(torch::allclose(fls.t(), ls.t()));
+}
+
+TEST(TensorTest, dropout_shape_and_values) {
+    auto t = Tensor<2, 3>::randn();
+    // In eval mode (p=0 or training=false), dropout is identity
+    auto d = F::dropout(t, /*p=*/0.5, /*training=*/false);
+    EXPECT_TRUE(d.compare_sizes(torch::IntArrayRef{2, 3}));
+    EXPECT_TRUE(torch::allclose(d.t(), t.t()));
+
+    // With p=0, dropout is always identity
+    auto d0 = F::dropout(t, /*p=*/0.0, /*training=*/true);
+    EXPECT_TRUE(torch::allclose(d0.t(), t.t()));
+}
+
+TEST(TensorTest, exp_shape_and_values) {
+    auto t = Tensor<2, 3>::randn();
+    auto e = t.exp();
+    EXPECT_TRUE(e.compare_sizes(torch::IntArrayRef{2, 3}));
+
+    // exp(0) = 1
+    auto zeros = Tensor<2, 3>::zeroes();
+    auto ez = zeros.exp();
+    EXPECT_TRUE(torch::allclose(ez.t(), torch::ones({2, 3}), 1e-5, 1e-5));
+
+    // Functional version
+    auto fe = F::exp(t);
+    EXPECT_TRUE(torch::allclose(fe.t(), e.t()));
+}
+
+TEST(TensorTest, log_shape_and_values) {
+    // Use positive values for log
+    auto t = Tensor<2, 3>::ones();
+    auto l = t.log();
+    EXPECT_TRUE(l.compare_sizes(torch::IntArrayRef{2, 3}));
+
+    // log(1) = 0
+    EXPECT_TRUE(torch::allclose(l.t(), torch::zeros({2, 3}), 1e-5, 1e-5));
+
+    // log(exp(x)) = x roundtrip
+    auto x = Tensor<2, 3>::randn();
+    auto roundtrip = x.exp().log();
+    EXPECT_TRUE(torch::allclose(roundtrip.t(), x.t(), 1e-4, 1e-4));
+
+    // Functional version
+    auto fl = F::log(t);
+    EXPECT_TRUE(torch::allclose(fl.t(), l.t()));
+}
+
+TEST(TensorTest, sqrt_shape_and_values) {
+    // Use positive values for sqrt
+    auto t = Tensor<2, 3>(torch::tensor({{1.0f, 4.0f, 9.0f}, {16.0f, 25.0f, 36.0f}}));
+    auto s = t.sqrt();
+    EXPECT_TRUE(s.compare_sizes(torch::IntArrayRef{2, 3}));
+
+    auto expected = torch::tensor({{1.0f, 2.0f, 3.0f}, {4.0f, 5.0f, 6.0f}});
+    EXPECT_TRUE(torch::allclose(s.t(), expected, 1e-5, 1e-5));
+
+    // Functional version
+    auto fs = F::sqrt(t);
+    EXPECT_TRUE(torch::allclose(fs.t(), expected, 1e-5, 1e-5));
+}
+
+
+TEST(TensorTest, LayerNorm) {
+    trails::LayerNorm<2, 3, 4> ln;
+    auto x = Tensor<2, 3, 4>::randn();
+    auto y = ln.forward(x);
+    EXPECT_TRUE(y.compare_sizes(torch::IntArrayRef{2, 3, 4}));
+    EXPECT_EQ(y.dim(), 3);
+    EXPECT_EQ(y.size<0>, 2);
+    EXPECT_EQ(y.size<1>, 3);
+    EXPECT_EQ(y.size<2>, 4);
+}
+
+TEST(TensorTest, BatchNorm1d) {
+    trails::BatchNorm1d<2, 3, 4> bn;
+    bn.eval();
+    auto x = Tensor<2, 3, 4>::randn();
+    auto y = bn.forward(x);
+    EXPECT_TRUE(y.compare_sizes(torch::IntArrayRef{2, 3, 4}));
+    EXPECT_EQ(y.dim(), 3);
+    EXPECT_EQ(y.size<0>, 2);
+    EXPECT_EQ(y.size<1>, 3);
+    EXPECT_EQ(y.size<2>, 4);
+}
+
+TEST(TensorTest, BatchNorm2d) {
+    trails::BatchNorm2d<2, 3, 4, 5> bn;
+    bn.eval();
+    auto x = Tensor<2, 3, 4, 5>::randn();
+    auto y = bn.forward(x);
+    EXPECT_TRUE(y.compare_sizes(torch::IntArrayRef{2, 3, 4, 5}));
+    EXPECT_EQ(y.dim(), 4);
+    EXPECT_EQ(y.size<0>, 2);
+    EXPECT_EQ(y.size<1>, 3);
+    EXPECT_EQ(y.size<2>, 4);
+    EXPECT_EQ(y.size<3>, 5);
+}

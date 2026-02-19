@@ -279,6 +279,29 @@ struct Tensor {
 
     Tensor rsqrt() { return { t_.rsqrt() }; }
     Tensor square() { return *this * *this; }
+
+    // Activation functions (shape-preserving)
+    Tensor relu() { return { torch::relu(t_) }; }
+    Tensor gelu() { return { torch::gelu(t_) }; }
+    Tensor sigmoid() { return { torch::sigmoid(t_) }; }
+    Tensor tanh() { return { torch::tanh(t_) }; }
+
+    template<int64_t D>
+    Tensor softmax() {
+        static_assert(D >= 0 && D < dim(), "softmax: dim out of range");
+        return { torch::softmax(t_, D) };
+    }
+
+    template<int64_t D>
+    Tensor log_softmax() {
+        static_assert(D >= 0 && D < dim(), "log_softmax: dim out of range");
+        return { torch::log_softmax(t_, D) };
+    }
+
+    // Elementwise math (shape-preserving)
+    Tensor exp() { return { t_.exp() }; }
+    Tensor log() { return { t_.log() }; }
+    Tensor sqrt() { return { t_.sqrt() }; }
     Tensor operator+(Tensor<Dims...> other) { return { t_ + other.t() }; }
     Tensor operator+(torch::Tensor other) { return { t_ + other }; }
     Tensor operator+(float other) { return { t_ + other }; }
@@ -495,6 +518,49 @@ class Linear : public TorchWrapperLayer<Tensor<B, InDim>, Tensor<B, OutDim>, tor
     }
 };
 
+/*
+ * LayerNorm: wraps torch::nn::LayerNorm.
+ * Normalizes over the last sizeof...(Dims) dimensions.
+ * Input/output shape: Tensor<B, Dims...>
+ */
+template<int B, int ...Dims>
+class LayerNorm : public TorchWrapperLayer<Tensor<B, Dims...>, Tensor<B, Dims...>, torch::nn::LayerNorm> {
+    using InputType = Tensor<B, Dims...>;
+    using Base = TorchWrapperLayer<InputType, InputType, torch::nn::LayerNorm>;
+public:
+    LayerNorm()
+    : Base(torch::nn::LayerNorm(torch::nn::LayerNormOptions({Dims...})))
+    {}
+};
+
+/*
+ * BatchNorm1d: wraps torch::nn::BatchNorm1d.
+ * Input/output shape: Tensor<B, C, L>
+ */
+template<int B, int C, int L>
+class BatchNorm1d : public TorchWrapperLayer<Tensor<B, C, L>, Tensor<B, C, L>, torch::nn::BatchNorm1d> {
+    using InputType = Tensor<B, C, L>;
+    using Base = TorchWrapperLayer<InputType, InputType, torch::nn::BatchNorm1d>;
+public:
+    BatchNorm1d()
+    : Base(torch::nn::BatchNorm1d(torch::nn::BatchNormOptions(C)))
+    {}
+};
+
+/*
+ * BatchNorm2d: wraps torch::nn::BatchNorm2d.
+ * Input/output shape: Tensor<B, C, H, W>
+ */
+template<int B, int C, int H, int W>
+class BatchNorm2d : public TorchWrapperLayer<Tensor<B, C, H, W>, Tensor<B, C, H, W>, torch::nn::BatchNorm2d> {
+    using InputType = Tensor<B, C, H, W>;
+    using Base = TorchWrapperLayer<InputType, InputType, torch::nn::BatchNorm2d>;
+public:
+    BatchNorm2d()
+    : Base(torch::nn::BatchNorm2d(torch::nn::BatchNormOptions(C)))
+    {}
+};
+
 namespace functional {
 /* conv1d.
  * See https://pytorch.org/docs/stable/generated/torch.nn.functional.conv1d.html#torch.nn.functional.conv1d
@@ -578,6 +644,40 @@ Tensor<B, EmbeddingDim>
 project(Tensor<B, Length> input, Tensor<DictionarySize, EmbeddingDim> weights) {
     return torch::nn::functional::embedding(input.t(), weights.t());
 }
+
+// Activation functions (shape-preserving)
+template<typename TensorType>
+TensorType relu(TensorType input) { return input.relu(); }
+
+template<typename TensorType>
+TensorType gelu(TensorType input) { return input.gelu(); }
+
+template<typename TensorType>
+TensorType sigmoid(TensorType input) { return input.sigmoid(); }
+
+template<typename TensorType>
+TensorType tanh(TensorType input) { return input.tanh(); }
+
+template<int64_t D, typename TensorType>
+TensorType softmax(TensorType input) { return input.template softmax<D>(); }
+
+template<int64_t D, typename TensorType>
+TensorType log_softmax(TensorType input) { return input.template log_softmax<D>(); }
+
+template<typename TensorType>
+TensorType dropout(TensorType input, double p = 0.5, bool training = true) {
+    return { torch::dropout(input.t(), p, training) };
+}
+
+// Elementwise math (shape-preserving)
+template<typename TensorType>
+TensorType exp(TensorType input) { return input.exp(); }
+
+template<typename TensorType>
+TensorType log(TensorType input) { return input.log(); }
+
+template<typename TensorType>
+TensorType sqrt(TensorType input) { return input.sqrt(); }
 
 }
 namespace detail {
