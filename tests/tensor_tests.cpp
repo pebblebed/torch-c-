@@ -596,3 +596,305 @@ TEST(TensorTest, BatchNorm2d) {
     EXPECT_EQ(y.size<2>, 4);
     EXPECT_EQ(y.size<3>, 5);
 }
+
+// ---- Wave 3B: Pooling, Embedding, and remaining functional ops ----
+
+TEST(TensorTest, max_pool1d_basic) {
+    // Input: B=2, C=3, L=10, kernel_size=3, stride=3
+    // Output length: (10 - 3) / 3 + 1 = 3
+    auto input = Tensor<2, 3, 10>::randn();
+    auto output = F::max_pool1d<3, 3>(input);
+    EXPECT_TRUE(output.compare_sizes(torch::IntArrayRef{2, 3, 3}));
+}
+
+TEST(TensorTest, max_pool1d_stride1) {
+    // Input: B=1, C=1, L=8, kernel_size=3, stride=1
+    // Output length: (8 - 3) / 1 + 1 = 6
+    auto input = Tensor<1, 1, 8>::arange();
+    auto output = F::max_pool1d<3, 1>(input);
+    EXPECT_TRUE(output.compare_sizes(torch::IntArrayRef{1, 1, 6}));
+    // First window [0,1,2] -> max=2, second [1,2,3] -> max=3, etc.
+    EXPECT_FLOAT_EQ(output.t().index({0, 0, 0}).item<float>(), 2.0f);
+    EXPECT_FLOAT_EQ(output.t().index({0, 0, 1}).item<float>(), 3.0f);
+}
+
+TEST(TensorTest, max_pool2d_basic) {
+    // Input: B=2, C=3, H=8, W=8, kernel=2x2, stride=2x2
+    // Output: B=2, C=3, H=4, W=4
+    auto input = Tensor<2, 3, 8, 8>::randn();
+    auto output = F::max_pool2d<2, 2, 2, 2>(input);
+    EXPECT_TRUE(output.compare_sizes(torch::IntArrayRef{2, 3, 4, 4}));
+}
+
+TEST(TensorTest, max_pool2d_asymmetric) {
+    // Input: B=1, C=1, H=6, W=9, kernel=3x3, stride=2x3
+    // Output H: (6 - 3) / 2 + 1 = 2
+    // Output W: (9 - 3) / 3 + 1 = 3
+    auto input = Tensor<1, 1, 6, 9>::randn();
+    auto output = F::max_pool2d<3, 3, 2, 3>(input);
+    EXPECT_TRUE(output.compare_sizes(torch::IntArrayRef{1, 1, 2, 3}));
+}
+
+TEST(TensorTest, avg_pool1d_basic) {
+    // Input: B=2, C=3, L=10, kernel_size=2, stride=2
+    // Output length: (10 - 2) / 2 + 1 = 5
+    auto input = Tensor<2, 3, 10>::randn();
+    auto output = F::avg_pool1d<2, 2>(input);
+    EXPECT_TRUE(output.compare_sizes(torch::IntArrayRef{2, 3, 5}));
+}
+
+TEST(TensorTest, avg_pool1d_values) {
+    // Input: B=1, C=1, L=4, kernel_size=2, stride=2
+    // [0, 1, 2, 3] -> avg([0,1])=0.5, avg([2,3])=2.5
+    auto input = Tensor<1, 1, 4>::arange();
+    auto output = F::avg_pool1d<2, 2>(input);
+    EXPECT_TRUE(output.compare_sizes(torch::IntArrayRef{1, 1, 2}));
+    EXPECT_NEAR(output.t().index({0, 0, 0}).item<float>(), 0.5f, 1e-5);
+    EXPECT_NEAR(output.t().index({0, 0, 1}).item<float>(), 2.5f, 1e-5);
+}
+
+TEST(TensorTest, avg_pool2d_basic) {
+    // Input: B=2, C=3, H=8, W=8, kernel=2x2, stride=2x2
+    // Output: B=2, C=3, H=4, W=4
+    auto input = Tensor<2, 3, 8, 8>::randn();
+    auto output = F::avg_pool2d<2, 2, 2, 2>(input);
+    EXPECT_TRUE(output.compare_sizes(torch::IntArrayRef{2, 3, 4, 4}));
+}
+
+TEST(TensorTest, avg_pool2d_asymmetric) {
+    // Input: B=1, C=1, H=6, W=9, kernel=3x3, stride=2x3
+    // Output H: (6 - 3) / 2 + 1 = 2
+    // Output W: (9 - 3) / 3 + 1 = 3
+    auto input = Tensor<1, 1, 6, 9>::randn();
+    auto output = F::avg_pool2d<3, 3, 2, 3>(input);
+    EXPECT_TRUE(output.compare_sizes(torch::IntArrayRef{1, 1, 2, 3}));
+}
+
+TEST(TensorTest, Embedding_basic) {
+    // VocabSize=100, EmbedDim=32
+    // Input: Tensor<2, 5> of integer indices -> Output: Tensor<2, 5, 32>
+    trails::Embedding<100, 32> emb;
+    auto indices = Tensor<2, 5>(torch::randint(0, 100, {2, 5}, torch::kLong));
+    auto output = emb.forward(indices);
+    EXPECT_TRUE(output.compare_sizes(torch::IntArrayRef{2, 5, 32}));
+}
+
+TEST(TensorTest, Embedding_single_batch) {
+    // VocabSize=10, EmbedDim=4
+    trails::Embedding<10, 4> emb;
+    auto indices = Tensor<1, 3>(torch::randint(0, 10, {1, 3}, torch::kLong));
+    auto output = emb.forward(indices);
+    EXPECT_TRUE(output.compare_sizes(torch::IntArrayRef{1, 3, 4}));
+}
+
+TEST(TensorTest, flatten_all) {
+    // Flatten all dims: Tensor<2, 3, 4> -> Tensor<24>
+    auto t = Tensor<2, 3, 4>::arange();
+    auto f = F::flatten<0, 2>(t);
+    EXPECT_TRUE(f.compare_sizes(torch::IntArrayRef{24}));
+    // Values should be preserved
+    for (int i = 0; i < 24; ++i) {
+        EXPECT_FLOAT_EQ(f.data_ptr<float>()[i], float(i));
+    }
+}
+
+TEST(TensorTest, flatten_partial) {
+    // Flatten dims 1,2: Tensor<2, 3, 4> -> Tensor<2, 12>
+    auto t = Tensor<2, 3, 4>::randn();
+    auto f = F::flatten<1, 2>(t);
+    EXPECT_TRUE(f.compare_sizes(torch::IntArrayRef{2, 12}));
+}
+
+TEST(TensorTest, flatten_middle) {
+    // Flatten dims 1,2 of 4D: Tensor<2, 3, 4, 5> -> Tensor<2, 12, 5>
+    auto t = Tensor<2, 3, 4, 5>::randn();
+    auto f = F::flatten<1, 2>(t);
+    EXPECT_TRUE(f.compare_sizes(torch::IntArrayRef{2, 12, 5}));
+}
+
+TEST(TensorTest, flatten_single_dim) {
+    // Flatten a single dim (no-op): Tensor<2, 3, 4> -> Tensor<2, 3, 4>
+    auto t = Tensor<2, 3, 4>::randn();
+    auto f = F::flatten<1, 1>(t);
+    EXPECT_TRUE(f.compare_sizes(torch::IntArrayRef{2, 3, 4}));
+}
+
+TEST(TensorTest, functional_linear_no_bias) {
+    // input: Tensor<2, 3>, weight: Tensor<4, 3> -> output: Tensor<2, 4>
+    auto input = Tensor<2, 3>::ones();
+    auto weight = Tensor<4, 3>::ones();
+    auto output = F::linear(input, weight);
+    EXPECT_TRUE(output.compare_sizes(torch::IntArrayRef{2, 4}));
+    // ones(2,3) x ones(3,4) = 3*ones(2,4)
+    for (int i = 0; i < output.numel(); ++i) {
+        EXPECT_FLOAT_EQ(output.data_ptr<float>()[i], 3.0f);
+    }
+}
+
+TEST(TensorTest, functional_linear_with_bias) {
+    auto input = Tensor<2, 3>::ones();
+    auto weight = Tensor<4, 3>::ones();
+    auto bias = Tensor<4>::ones();
+    auto output = F::linear(input, weight, std::optional{bias});
+    EXPECT_TRUE(output.compare_sizes(torch::IntArrayRef{2, 4}));
+    // ones(2,3) x ones(3,4) + ones(4) = 4*ones(2,4)
+    for (int i = 0; i < output.numel(); ++i) {
+        EXPECT_FLOAT_EQ(output.data_ptr<float>()[i], 4.0f);
+    }
+}
+
+TEST(TensorTest, functional_linear_batched) {
+    // 3D input: Tensor<B, SeqLen, InDim> x Tensor<OutDim, InDim> -> Tensor<B, SeqLen, OutDim>
+    auto input = Tensor<2, 5, 3>::ones();
+    auto weight = Tensor<4, 3>::ones();
+    auto output = F::linear(input, weight);
+    EXPECT_TRUE(output.compare_sizes(torch::IntArrayRef{2, 5, 4}));
+    for (int i = 0; i < output.numel(); ++i) {
+        EXPECT_FLOAT_EQ(output.data_ptr<float>()[i], 3.0f);
+    }
+}
+
+// ---- Wave 3A: Attention ----
+
+TEST(TensorTest, matmul_batched_4d) {
+    // B=2, H=3, M=4, K=5, N=6
+    auto a = Tensor<2, 3, 4, 5>::ones();
+    auto b = Tensor<2, 3, 5, 6>::ones();
+    auto c = matmul(a, b);
+    EXPECT_TRUE(c.compare_sizes(torch::IntArrayRef{2, 3, 4, 6}));
+    for (int i = 0; i < c.numel(); ++i) {
+        EXPECT_FLOAT_EQ(c.data_ptr<float>()[i], 5.0f);
+    }
+}
+
+TEST(TensorTest, scaled_dot_product_attention_basic) {
+    // B=1, H=1, L=2, D=4, S=2
+    // Use identity-like Q, K so attention weights are uniform
+    auto Q = Tensor<1, 1, 2, 4>::ones();
+    auto K = Tensor<1, 1, 2, 4>::ones();
+    auto V = Tensor<1, 1, 2, 4>::ones();
+    auto out = F::scaled_dot_product_attention(Q, K, V);
+    EXPECT_TRUE(out.compare_sizes(torch::IntArrayRef{1, 1, 2, 4}));
+    // With uniform Q, K, V=ones, output should be ones
+    for (int i = 0; i < out.numel(); ++i) {
+        EXPECT_NEAR(out.data_ptr<float>()[i], 1.0f, 1e-5);
+    }
+}
+
+TEST(TensorTest, scaled_dot_product_attention_shape) {
+    // B=2, H=4, L=8, S=6, D=16
+    auto Q = Tensor<2, 4, 8, 16>::randn();
+    auto K = Tensor<2, 4, 6, 16>::randn();
+    auto V = Tensor<2, 4, 6, 16>::randn();
+    auto out = F::scaled_dot_product_attention(Q, K, V);
+    EXPECT_TRUE(out.compare_sizes(torch::IntArrayRef{2, 4, 8, 16}));
+}
+
+TEST(TensorTest, scaled_dot_product_attention_self) {
+    // Self-attention: L == S
+    // B=2, H=2, L=S=4, D=8
+    auto Q = Tensor<2, 2, 4, 8>::randn();
+    auto K = Tensor<2, 2, 4, 8>::randn();
+    auto V = Tensor<2, 2, 4, 8>::randn();
+    auto out = F::scaled_dot_product_attention(Q, K, V);
+    EXPECT_TRUE(out.compare_sizes(torch::IntArrayRef{2, 2, 4, 8}));
+}
+
+TEST(TensorTest, scaled_dot_product_attention_scaling) {
+    // Verify scaling: with D=4, scale = 1/sqrt(4) = 0.5
+    // Use specific values to verify the math
+    auto Q = Tensor<1, 1, 1, 4>(torch::ones({1, 1, 1, 4}));
+    auto K = Tensor<1, 1, 1, 4>(torch::ones({1, 1, 1, 4}));
+    auto V = Tensor<1, 1, 1, 4>(torch::tensor({{{{1.0f, 2.0f, 3.0f, 4.0f}}}}));
+    auto out = F::scaled_dot_product_attention(Q, K, V);
+    // Single key, so attention weight is 1.0 on that key
+    // Output should equal V
+    for (int i = 0; i < 4; ++i) {
+        EXPECT_NEAR(out.data_ptr<float>()[i], V.data_ptr<float>()[i], 1e-5);
+    }
+}
+
+TEST(TensorTest, MultiHeadAttention_shape) {
+    // B=2, SeqLen=8, NumHeads=2, ModelDim=16
+    // HeadDim = ModelDim / NumHeads = 8
+    trails::MultiHeadAttention<2, 8, 2, 16> mha;
+    auto x = Tensor<2, 8, 16>::randn();
+    auto y = mha.forward(x);
+    EXPECT_TRUE(y.compare_sizes(torch::IntArrayRef{2, 8, 16}));
+}
+
+TEST(TensorTest, MultiHeadAttention_single_head) {
+    // B=1, SeqLen=4, NumHeads=1, ModelDim=8
+    trails::MultiHeadAttention<1, 4, 1, 8> mha;
+    auto x = Tensor<1, 4, 8>::randn();
+    auto y = mha.forward(x);
+    EXPECT_TRUE(y.compare_sizes(torch::IntArrayRef{1, 4, 8}));
+}
+
+TEST(TensorTest, MultiHeadAttention_multi_head) {
+    // B=2, SeqLen=6, NumHeads=4, ModelDim=32
+    trails::MultiHeadAttention<2, 6, 4, 32> mha;
+    auto x = Tensor<2, 6, 32>::randn();
+    auto y = mha.forward(x);
+    EXPECT_TRUE(y.compare_sizes(torch::IntArrayRef{2, 6, 32}));
+}
+
+// ============================================================
+// Recurrent layers: RNN, LSTM, GRU
+// ============================================================
+
+TEST(TensorTest, RNN_basic) {
+    // B=2, SeqLen=5, InputSize=10, HiddenSize=20, NumLayers=1
+    trails::RNN<2, 5, 10, 20, 1> rnn;
+    auto x = Tensor<2, 5, 10>::randn();
+    auto [output, h_n] = rnn.forward(x);
+    EXPECT_TRUE(output.compare_sizes(torch::IntArrayRef{2, 5, 20}));
+    EXPECT_TRUE(h_n.compare_sizes(torch::IntArrayRef{1, 2, 20}));
+}
+
+TEST(TensorTest, RNN_multi_layer) {
+    // B=3, SeqLen=7, InputSize=8, HiddenSize=16, NumLayers=3
+    trails::RNN<3, 7, 8, 16, 3> rnn;
+    auto x = Tensor<3, 7, 8>::randn();
+    auto [output, h_n] = rnn.forward(x);
+    EXPECT_TRUE(output.compare_sizes(torch::IntArrayRef{3, 7, 16}));
+    EXPECT_TRUE(h_n.compare_sizes(torch::IntArrayRef{3, 3, 16}));
+}
+
+TEST(TensorTest, LSTM_basic) {
+    // B=2, SeqLen=5, InputSize=10, HiddenSize=20, NumLayers=1
+    trails::LSTM<2, 5, 10, 20, 1> lstm;
+    auto x = Tensor<2, 5, 10>::randn();
+    auto [output, h_n, c_n] = lstm.forward(x);
+    EXPECT_TRUE(output.compare_sizes(torch::IntArrayRef{2, 5, 20}));
+    EXPECT_TRUE(h_n.compare_sizes(torch::IntArrayRef{1, 2, 20}));
+    EXPECT_TRUE(c_n.compare_sizes(torch::IntArrayRef{1, 2, 20}));
+}
+
+TEST(TensorTest, LSTM_multi_layer) {
+    // B=4, SeqLen=6, InputSize=12, HiddenSize=24, NumLayers=2
+    trails::LSTM<4, 6, 12, 24, 2> lstm;
+    auto x = Tensor<4, 6, 12>::randn();
+    auto [output, h_n, c_n] = lstm.forward(x);
+    EXPECT_TRUE(output.compare_sizes(torch::IntArrayRef{4, 6, 24}));
+    EXPECT_TRUE(h_n.compare_sizes(torch::IntArrayRef{2, 4, 24}));
+    EXPECT_TRUE(c_n.compare_sizes(torch::IntArrayRef{2, 4, 24}));
+}
+
+TEST(TensorTest, GRU_basic) {
+    // B=2, SeqLen=5, InputSize=10, HiddenSize=20, NumLayers=1
+    trails::GRU<2, 5, 10, 20, 1> gru;
+    auto x = Tensor<2, 5, 10>::randn();
+    auto [output, h_n] = gru.forward(x);
+    EXPECT_TRUE(output.compare_sizes(torch::IntArrayRef{2, 5, 20}));
+    EXPECT_TRUE(h_n.compare_sizes(torch::IntArrayRef{1, 2, 20}));
+}
+
+TEST(TensorTest, GRU_multi_layer) {
+    // B=3, SeqLen=7, InputSize=8, HiddenSize=16, NumLayers=3
+    trails::GRU<3, 7, 8, 16, 3> gru;
+    auto x = Tensor<3, 7, 8>::randn();
+    auto [output, h_n] = gru.forward(x);
+    EXPECT_TRUE(output.compare_sizes(torch::IntArrayRef{3, 7, 16}));
+    EXPECT_TRUE(h_n.compare_sizes(torch::IntArrayRef{3, 3, 16}));
+}

@@ -418,6 +418,32 @@ Tensor<B, M, N> matmul(Tensor<B, M, K> a, Tensor<B, K, N> b) {
     return Tensor<B, M, N>{ torch::matmul(a.t(), b.t()) };
 }
 
+// matmul: batched 4D case Tensor<B,H,M,K> x Tensor<B,H,K,N> -> Tensor<B,H,M,N>
+template<int B, int H, int M, int K, int N>
+Tensor<B, H, M, N> matmul(Tensor<B, H, M, K> a, Tensor<B, H, K, N> b) {
+    return Tensor<B, H, M, N>{ torch::matmul(a.t(), b.t()) };
+}
+
+// scaled_dot_product_attention:
+//   Q: Tensor<B, H, L, D>  (queries)
+//   K: Tensor<B, H, S, D>  (keys)
+//   V: Tensor<B, H, S, Dv> (values)
+//   -> Tensor<B, H, L, Dv>
+// Computes: softmax(Q @ K^T / sqrt(D)) @ V
+template<int B, int H, int L, int S, int D, int Dv>
+Tensor<B, H, L, Dv>
+scaled_dot_product_attention(Tensor<B, H, L, D> Q,
+                             Tensor<B, H, S, D> K,
+                             Tensor<B, H, S, Dv> V) {
+    const float scale = 1.0f / std::sqrt(static_cast<float>(D));
+    // Q @ K^T -> (B, H, L, S)
+    auto scores = matmul(Q, K.template transpose<2, 3>()) * scale;
+    // softmax over last dim (the S / key dimension)
+    auto weights = scores.template softmax<3>();
+    // weights @ V -> (B, H, L, Dv)
+    return matmul(weights, V);
+}
+
 namespace functional {
 
 // cat<Dim>(a, b): concatenate two tensors along dimension Dim
@@ -561,6 +587,171 @@ public:
     {}
 };
 
+/*
+ * Embedding: wraps torch::nn::Embedding.
+ * Maps integer indices to dense vectors.
+ * Input: Tensor<B, SeqLen> (long/int indices) -> Output: Tensor<B, SeqLen, EmbedDim>
+ */
+template<int VocabSize, int EmbedDim>
+class Embedding : public torch::nn::Module {
+    torch::nn::Embedding emb;
+public:
+    Embedding()
+    : emb(torch::nn::Embedding(torch::nn::EmbeddingOptions(VocabSize, EmbedDim)))
+    {
+        register_module("emb", emb);
+    }
+
+    template<int B, int SeqLen>
+    Tensor<B, SeqLen, EmbedDim> forward(Tensor<B, SeqLen> input) {
+        return { emb->forward(input.t()) };
+    }
+};
+
+/*
+ * MultiHeadAttention: compile-time shape-checked multi-head attention.
+ * Input/output shape: Tensor<B, SeqLen, ModelDim>
+ * Template params:
+ *   B        - batch size
+ *   SeqLen   - sequence length
+ *   NumHeads - number of attention heads
+ *   ModelDim - model dimension (must be divisible by NumHeads)
+ *
+ * HeadDim = ModelDim / NumHeads (computed at compile time).
+ * Internally projects Q, K, V via linear layers, reshapes to
+ * (B, NumHeads, SeqLen, HeadDim), applies scaled dot-product attention,
+ * then projects output back to ModelDim.
+ */
+template<int B, int SeqLen, int NumHeads, int ModelDim>
+class MultiHeadAttention : public Module<Tensor<B, SeqLen, ModelDim>, Tensor<B, SeqLen, ModelDim>> {
+    static_assert(ModelDim % NumHeads == 0,
+        "MultiHeadAttention: ModelDim must be divisible by NumHeads");
+    static constexpr int HeadDim = ModelDim / NumHeads;
+
+    using InputType = Tensor<B, SeqLen, ModelDim>;
+
+    // Q, K, V projections: (B*SeqLen, ModelDim) -> (B*SeqLen, ModelDim)
+    torch::nn::Linear Wq, Wk, Wv, Wo;
+
+public:
+    MultiHeadAttention()
+    : Wq(torch::nn::Linear(torch::nn::LinearOptions(ModelDim, ModelDim)))
+    , Wk(torch::nn::Linear(torch::nn::LinearOptions(ModelDim, ModelDim)))
+    , Wv(torch::nn::Linear(torch::nn::LinearOptions(ModelDim, ModelDim)))
+    , Wo(torch::nn::Linear(torch::nn::LinearOptions(ModelDim, ModelDim)))
+    {
+        torch::nn::Module::register_module("Wq", Wq);
+        torch::nn::Module::register_module("Wk", Wk);
+        torch::nn::Module::register_module("Wv", Wv);
+        torch::nn::Module::register_module("Wo", Wo);
+    }
+
+    InputType forward(InputType input) override {
+        // input: (B, SeqLen, ModelDim)
+        auto x = input.t();
+
+        // Project Q, K, V: each (B, SeqLen, ModelDim)
+        auto q = Wq->forward(x).reshape({B, SeqLen, NumHeads, HeadDim}).transpose(1, 2);
+        auto k = Wk->forward(x).reshape({B, SeqLen, NumHeads, HeadDim}).transpose(1, 2);
+        auto v = Wv->forward(x).reshape({B, SeqLen, NumHeads, HeadDim}).transpose(1, 2);
+        // q, k, v are now (B, NumHeads, SeqLen, HeadDim)
+
+        // Typed tensors for scaled_dot_product_attention
+        using QKV = Tensor<B, NumHeads, SeqLen, HeadDim>;
+        auto Q = QKV(q);
+        auto K = QKV(k);
+        auto V = QKV(v);
+
+        // Scaled dot-product attention
+        auto attn_out = scaled_dot_product_attention(Q, K, V);
+        // attn_out: (B, NumHeads, SeqLen, HeadDim)
+
+        // Reshape back: (B, SeqLen, ModelDim)
+        auto concat = attn_out.t().transpose(1, 2).contiguous().reshape({B, SeqLen, ModelDim});
+
+        // Output projection
+        return InputType(Wo->forward(concat));
+    }
+};
+
+/*
+ * RNN: wraps torch::nn::RNN with compile-time shape checking.
+ * Uses batch_first=true. Input: Tensor<B, SeqLen, InputSize>
+ * Returns: {output: Tensor<B, SeqLen, HiddenSize>, h_n: Tensor<NumLayers, B, HiddenSize>}
+ */
+template<int B, int SeqLen, int InputSize, int HiddenSize, int NumLayers = 1>
+class RNN : public torch::nn::Module {
+    torch::nn::RNN rnn_;
+public:
+    using output_t = Tensor<B, SeqLen, HiddenSize>;
+    using hidden_t = Tensor<NumLayers, B, HiddenSize>;
+
+    RNN()
+    : rnn_(torch::nn::RNNOptions(InputSize, HiddenSize)
+           .num_layers(NumLayers).batch_first(true))
+    {
+        register_module("rnn", rnn_);
+    }
+
+    std::tuple<output_t, hidden_t> forward(Tensor<B, SeqLen, InputSize> input) {
+        auto [output, h_n] = rnn_->forward(input.t());
+        return { output_t{output}, hidden_t{h_n} };
+    }
+};
+
+/*
+ * LSTM: wraps torch::nn::LSTM with compile-time shape checking.
+ * Uses batch_first=true. Input: Tensor<B, SeqLen, InputSize>
+ * Returns: {output: Tensor<B, SeqLen, HiddenSize>,
+ *           h_n: Tensor<NumLayers, B, HiddenSize>,
+ *           c_n: Tensor<NumLayers, B, HiddenSize>}
+ */
+template<int B, int SeqLen, int InputSize, int HiddenSize, int NumLayers = 1>
+class LSTM : public torch::nn::Module {
+    torch::nn::LSTM lstm_;
+public:
+    using output_t = Tensor<B, SeqLen, HiddenSize>;
+    using hidden_t = Tensor<NumLayers, B, HiddenSize>;
+
+    LSTM()
+    : lstm_(torch::nn::LSTMOptions(InputSize, HiddenSize)
+            .num_layers(NumLayers).batch_first(true))
+    {
+        register_module("lstm", lstm_);
+    }
+
+    std::tuple<output_t, hidden_t, hidden_t> forward(Tensor<B, SeqLen, InputSize> input) {
+        auto [output, hidden_tuple] = lstm_->forward(input.t());
+        auto [h_n, c_n] = hidden_tuple;
+        return { output_t{output}, hidden_t{h_n}, hidden_t{c_n} };
+    }
+};
+
+/*
+ * GRU: wraps torch::nn::GRU with compile-time shape checking.
+ * Uses batch_first=true. Input: Tensor<B, SeqLen, InputSize>
+ * Returns: {output: Tensor<B, SeqLen, HiddenSize>, h_n: Tensor<NumLayers, B, HiddenSize>}
+ */
+template<int B, int SeqLen, int InputSize, int HiddenSize, int NumLayers = 1>
+class GRU : public torch::nn::Module {
+    torch::nn::GRU gru_;
+public:
+    using output_t = Tensor<B, SeqLen, HiddenSize>;
+    using hidden_t = Tensor<NumLayers, B, HiddenSize>;
+
+    GRU()
+    : gru_(torch::nn::GRUOptions(InputSize, HiddenSize)
+           .num_layers(NumLayers).batch_first(true))
+    {
+        register_module("gru", gru_);
+    }
+
+    std::tuple<output_t, hidden_t> forward(Tensor<B, SeqLen, InputSize> input) {
+        auto [output, h_n] = gru_->forward(input.t());
+        return { output_t{output}, hidden_t{h_n} };
+    }
+};
+
 namespace functional {
 /* conv1d.
  * See https://pytorch.org/docs/stable/generated/torch.nn.functional.conv1d.html#torch.nn.functional.conv1d
@@ -678,6 +869,169 @@ TensorType log(TensorType input) { return input.log(); }
 
 template<typename TensorType>
 TensorType sqrt(TensorType input) { return input.sqrt(); }
+
+// ---- Pooling operations ----
+
+/*
+ * max_pool1d: 1D max pooling with compile-time shape propagation.
+ * Input: Tensor<B, C, L> -> Output: Tensor<B, C, (L - KernelSize) / Stride + 1>
+ */
+template<
+    int KernelSize,
+    int Stride,
+    int B,
+    int C,
+    int L>
+Tensor<B, C, ((L - KernelSize) / Stride + 1)>
+max_pool1d(Tensor<B, C, L> input) {
+    return { torch::max_pool1d(input.t(),
+                               /*kernel_size=*/{KernelSize},
+                               /*stride=*/{Stride}) };
+}
+
+/*
+ * max_pool2d: 2D max pooling with compile-time shape propagation.
+ * Input: Tensor<B, C, H, W> -> Output: Tensor<B, C, (H-KH)/SH+1, (W-KW)/SW+1>
+ */
+template<
+    int KernelH,
+    int KernelW,
+    int StrideH,
+    int StrideW,
+    int B,
+    int C,
+    int H,
+    int W>
+Tensor<B, C, ((H - KernelH) / StrideH + 1), ((W - KernelW) / StrideW + 1)>
+max_pool2d(Tensor<B, C, H, W> input) {
+    return { torch::max_pool2d(input.t(),
+                               /*kernel_size=*/{KernelH, KernelW},
+                               /*stride=*/{StrideH, StrideW}) };
+}
+
+/*
+ * avg_pool1d: 1D average pooling with compile-time shape propagation.
+ * Input: Tensor<B, C, L> -> Output: Tensor<B, C, (L - KernelSize) / Stride + 1>
+ */
+template<
+    int KernelSize,
+    int Stride,
+    int B,
+    int C,
+    int L>
+Tensor<B, C, ((L - KernelSize) / Stride + 1)>
+avg_pool1d(Tensor<B, C, L> input) {
+    return { torch::avg_pool1d(input.t(),
+                               /*kernel_size=*/{KernelSize},
+                               /*stride=*/{Stride}) };
+}
+
+/*
+ * avg_pool2d: 2D average pooling with compile-time shape propagation.
+ * Input: Tensor<B, C, H, W> -> Output: Tensor<B, C, (H-KH)/SH+1, (W-KW)/SW+1>
+ */
+template<
+    int KernelH,
+    int KernelW,
+    int StrideH,
+    int StrideW,
+    int B,
+    int C,
+    int H,
+    int W>
+Tensor<B, C, ((H - KernelH) / StrideH + 1), ((W - KernelW) / StrideW + 1)>
+avg_pool2d(Tensor<B, C, H, W> input) {
+    return { torch::avg_pool2d(input.t(),
+                               /*kernel_size=*/{KernelH, KernelW},
+                               /*stride=*/{StrideH, StrideW}) };
+}
+
+// ---- Flatten ----
+
+} // namespace functional (for flatten detail helper)
+
+namespace detail {
+
+// Compile-time product of a range of elements in an array
+template<int Start, int End, int ...Dims>
+struct dim_product {
+    static constexpr auto arr = std::array<int, sizeof...(Dims)>{Dims...};
+    static constexpr int value = arr[Start] * dim_product<Start + 1, End, Dims...>::value;
+};
+
+template<int End, int ...Dims>
+struct dim_product<End, End, Dims...> {
+    static constexpr auto arr = std::array<int, sizeof...(Dims)>{Dims...};
+    static constexpr int value = arr[End];
+};
+
+// Build the flattened shape: dims[0..Start) ++ product ++ dims[End+1..N)
+template<int StartDim, int EndDim, int ...Dims>
+struct flatten_result {
+    static constexpr int ndim = sizeof...(Dims);
+    static constexpr auto arr = std::array<int, ndim>{Dims...};
+    static constexpr int flat_dim = dim_product<StartDim, EndDim, Dims...>::value;
+
+    template<size_t... Pre, size_t... Post>
+    static auto make(std::index_sequence<Pre...>, std::index_sequence<Post...>)
+        -> Tensor<arr[Pre]..., flat_dim, arr[EndDim + 1 + Post]...>;
+
+    using type = decltype(make(
+        std::make_index_sequence<StartDim>{},
+        std::make_index_sequence<ndim - EndDim - 1>{}));
+};
+
+} // namespace detail
+
+namespace functional {
+
+/*
+ * flatten<StartDim, EndDim>: flatten dimensions from StartDim to EndDim (inclusive).
+ * Compile-time shape computation.
+ */
+template<int StartDim, int EndDim, int ...Dims>
+auto flatten(Tensor<Dims...> input) {
+    constexpr int ndim = sizeof...(Dims);
+    static_assert(StartDim >= 0 && StartDim < ndim, "flatten: StartDim out of range");
+    static_assert(EndDim >= StartDim && EndDim < ndim, "flatten: EndDim out of range");
+    using result_t = typename detail::flatten_result<StartDim, EndDim, Dims...>::type;
+    return result_t{ torch::flatten(input.t(), StartDim, EndDim) };
+}
+
+// ---- Functional linear ----
+
+/*
+ * linear: functional linear transformation.
+ * 2D: Tensor<M, InDim> x Tensor<OutDim, InDim> -> Tensor<M, OutDim>
+ */
+template<int M, int InDim, int OutDim>
+Tensor<M, OutDim>
+linear(Tensor<M, InDim> input, Tensor<OutDim, InDim> weight,
+       std::optional<Tensor<OutDim>> bias = std::nullopt) {
+    return { torch::nn::functional::linear(input.t(), weight.t(),
+             bias ? bias->t() : torch::Tensor()) };
+}
+
+/*
+ * linear: functional linear transformation (batched 3D).
+ * Tensor<B, SeqLen, InDim> x Tensor<OutDim, InDim> -> Tensor<B, SeqLen, OutDim>
+ */
+template<int B, int SeqLen, int InDim, int OutDim>
+Tensor<B, SeqLen, OutDim>
+linear(Tensor<B, SeqLen, InDim> input, Tensor<OutDim, InDim> weight,
+       std::optional<Tensor<OutDim>> bias = std::nullopt) {
+    return { torch::nn::functional::linear(input.t(), weight.t(),
+             bias ? bias->t() : torch::Tensor()) };
+}
+
+// scaled_dot_product_attention (forwarding to trails:: free function)
+template<int B, int H, int L, int S, int D, int Dv>
+Tensor<B, H, L, Dv>
+scaled_dot_product_attention(Tensor<B, H, L, D> Q,
+                             Tensor<B, H, S, D> K,
+                             Tensor<B, H, S, Dv> V) {
+    return trails::scaled_dot_product_attention(Q, K, V);
+}
 
 }
 namespace detail {

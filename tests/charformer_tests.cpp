@@ -106,3 +106,19 @@ TEST(CharformerTests, SelfAttention) {
     EXPECT_EQ(y.size(0), 64);
 #endif
 }
+
+TEST(CharformerTests, MultiHeadAttention) {
+    // B=2, SeqLen=16, NumHeads=4, ModelDim=64 (HeadDim=16)
+    constexpr int B = 2;
+    constexpr int L = 16;
+    constexpr int H = 4;
+    constexpr int D = 64;
+    trails::MultiHeadAttention<B, L, H, D> mha;
+    auto x = trails::Tensor<B, L, D>::randn();
+    auto y = mha.forward(x);
+    EXPECT_TRUE(y.compare_sizes(torch::IntArrayRef{B, L, D}));
+    EXPECT_EQ(y.dim(), 3);
+    EXPECT_EQ(y.size<0>, B);
+    EXPECT_EQ(y.size<1>, L);
+    EXPECT_EQ(y.size<2>, D);
+}
