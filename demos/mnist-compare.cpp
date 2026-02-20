@@ -11,54 +11,90 @@
 using namespace trails;
 namespace F = trails::functional;
 
+// ── MNIST constants ─────────────────────────────────────────
 constexpr int kBatchSize = 64;
-constexpr int kEpochs = 5;
+constexpr int kEpochs    = 5;
+
+// Image dimensions
+constexpr int kImgC      = 1;                              // input channels (grayscale)
+constexpr int kImgH      = 28;                             // image height
+constexpr int kImgW      = 28;                             // image width
+constexpr int kImgPixels = kImgC * kImgH * kImgW;         // 784, flattened
+
+// FC model
+constexpr int kFCHidden1 = 256;
+constexpr int kFCHidden2 = 128;
+
+// ConvNet model
+constexpr int kConv1Out  = 16;                             // conv1 output channels
+constexpr int kConv2Out  = 32;                             // conv2 output channels
+constexpr int kKernel    = 5;                              // conv kernel size
+constexpr int kPool      = 2;                              // pool kernel & stride
+
+// Derived dimensions (computed from above)
+constexpr int kConv1H    = kImgH - kKernel + 1;           // 24
+constexpr int kConv1W    = kImgW - kKernel + 1;           // 24
+constexpr int kPool1H    = kConv1H / kPool;                // 12
+constexpr int kPool1W    = kConv1W / kPool;                // 12
+constexpr int kConv2H    = kPool1H - kKernel + 1;          // 8
+constexpr int kConv2W    = kPool1W - kKernel + 1;          // 8
+constexpr int kPool2H    = kConv2H / kPool;                // 4
+constexpr int kPool2W    = kConv2W / kPool;                // 4
+constexpr int kConvFlat  = kConv2Out * kPool2H * kPool2W;  // 512
+
+constexpr int kNumClasses = 10;
+
+// Training hyperparameters
+constexpr double kLR        = 0.001;
+constexpr double kMnistMean = 0.1307;
+constexpr double kMnistStd  = 0.3081;
 
 // ── FC-only model ──────────────────────────────────────────────
-// Flatten(28×28→784) → Linear(784,256) → relu → Linear(256,128) → relu → Linear(128,10)
+// Flatten(kImgH×kImgW→kImgPixels) → Linear(kImgPixels,kFCHidden1) → relu
+// → Linear(kFCHidden1,kFCHidden2) → relu → Linear(kFCHidden2,kNumClasses)
 struct FCModel : torch::nn::Module {
     torch::nn::Linear fc1{nullptr}, fc2{nullptr}, fc3{nullptr};
 
     FCModel() {
-        fc1 = register_module("fc1", torch::nn::Linear(784, 256));
-        fc2 = register_module("fc2", torch::nn::Linear(256, 128));
-        fc3 = register_module("fc3", torch::nn::Linear(128, 10));
+        fc1 = register_module("fc1", torch::nn::Linear(kImgPixels, kFCHidden1));
+        fc2 = register_module("fc2", torch::nn::Linear(kFCHidden1, kFCHidden2));
+        fc3 = register_module("fc3", torch::nn::Linear(kFCHidden2, kNumClasses));
     }
 
-    Tensor<kBatchSize, 10> forward(Tensor<kBatchSize, 1, 28, 28> input) {
-        auto flat = F::flatten<1, 3>(input);            // Tensor<64, 784>
-        auto h1 = Tensor<kBatchSize, 256>(fc1->forward(flat.t()));
-        auto h2 = Tensor<kBatchSize, 128>(fc2->forward(F::relu(h1).t()));
-        return Tensor<kBatchSize, 10>(fc3->forward(F::relu(h2).t()));
+    Tensor<kBatchSize, kNumClasses> forward(Tensor<kBatchSize, kImgC, kImgH, kImgW> input) {
+        auto flat = F::flatten<1, 3>(input);            // Tensor<kBatchSize, kImgPixels>
+        auto h1 = Tensor<kBatchSize, kFCHidden1>(fc1->forward(flat.t()));
+        auto h2 = Tensor<kBatchSize, kFCHidden2>(fc2->forward(F::relu(h1).t()));
+        return Tensor<kBatchSize, kNumClasses>(fc3->forward(F::relu(h2).t()));
     }
 };
 
 // ── ConvNet model ──────────────────────────────────────────────
-// Conv2d(1→16, 5×5) → relu → MaxPool2d(2,2)
-// → Conv2d(16→32, 5×5) → relu → MaxPool2d(2,2)
-// → Flatten(32×4×4=512) → Linear(512,10)
+// Conv2d(kImgC→kConv1Out, kKernel×kKernel) → relu → MaxPool2d(kPool,kPool)
+// → Conv2d(kConv1Out→kConv2Out, kKernel×kKernel) → relu → MaxPool2d(kPool,kPool)
+// → Flatten(kConv2Out×kPool2H×kPool2W=kConvFlat) → Linear(kConvFlat,kNumClasses)
 struct ConvNetModel : torch::nn::Module {
     torch::nn::Conv2d conv1{nullptr}, conv2{nullptr};
     torch::nn::Linear fc{nullptr};
 
     ConvNetModel() {
         conv1 = register_module("conv1",
-            torch::nn::Conv2d(torch::nn::Conv2dOptions(1, 16, 5)));
+            torch::nn::Conv2d(torch::nn::Conv2dOptions(kImgC, kConv1Out, kKernel)));
         conv2 = register_module("conv2",
-            torch::nn::Conv2d(torch::nn::Conv2dOptions(16, 32, 5)));
-        fc = register_module("fc", torch::nn::Linear(512, 10));
+            torch::nn::Conv2d(torch::nn::Conv2dOptions(kConv1Out, kConv2Out, kKernel)));
+        fc = register_module("fc", torch::nn::Linear(kConvFlat, kNumClasses));
     }
 
-    Tensor<kBatchSize, 10> forward(Tensor<kBatchSize, 1, 28, 28> input) {
+    Tensor<kBatchSize, kNumClasses> forward(Tensor<kBatchSize, kImgC, kImgH, kImgW> input) {
         // Conv1 → relu → pool
-        auto c1 = Tensor<kBatchSize, 16, 24, 24>(conv1->forward(input.t()));
-        auto p1 = F::max_pool2d<2, 2, 2, 2>(F::relu(c1));   // Tensor<64,16,12,12>
+        auto c1 = Tensor<kBatchSize, kConv1Out, kConv1H, kConv1W>(conv1->forward(input.t()));
+        auto p1 = F::max_pool2d<kPool, kPool, kPool, kPool>(F::relu(c1));   // → <B,kConv1Out,kPool1H,kPool1W>
         // Conv2 → relu → pool
-        auto c2 = Tensor<kBatchSize, 32, 8, 8>(conv2->forward(p1.t()));
-        auto p2 = F::max_pool2d<2, 2, 2, 2>(F::relu(c2));   // Tensor<64,32,4,4>
+        auto c2 = Tensor<kBatchSize, kConv2Out, kConv2H, kConv2W>(conv2->forward(p1.t()));
+        auto p2 = F::max_pool2d<kPool, kPool, kPool, kPool>(F::relu(c2));   // → <B,kConv2Out,kPool2H,kPool2W>
         // Flatten → FC
-        auto flat = F::flatten<1, 3>(p2);                     // Tensor<64, 512>
-        return Tensor<kBatchSize, 10>(fc->forward(flat.t()));
+        auto flat = F::flatten<1, 3>(p2);                     // Tensor<kBatchSize, kConvFlat>
+        return Tensor<kBatchSize, kNumClasses>(fc->forward(flat.t()));
     }
 };
 
@@ -70,13 +106,13 @@ void train_and_eval(Model& model, const std::string& data_path,
 
     // Training data
     auto train_dataset = torch::data::datasets::MNIST(data_path)
-        .map(torch::data::transforms::Normalize<>(0.1307, 0.3081))
+        .map(torch::data::transforms::Normalize<>(kMnistMean, kMnistStd))
         .map(torch::data::transforms::Stack<>());
     auto train_loader = torch::data::make_data_loader(
         std::move(train_dataset),
         torch::data::DataLoaderOptions().batch_size(kBatchSize).drop_last(true));
 
-    torch::optim::Adam optimizer(model.parameters(), /*lr=*/0.001);
+    torch::optim::Adam optimizer(model.parameters(), /*lr=*/kLR);
 
     for (int epoch = 1; epoch <= kEpochs; ++epoch) {
         model.train();
@@ -84,7 +120,7 @@ void train_and_eval(Model& model, const std::string& data_path,
         int batches = 0;
         for (auto& batch : *train_loader) {
             optimizer.zero_grad();
-            auto input  = Tensor<kBatchSize, 1, 28, 28>(batch.data);
+            auto input  = Tensor<kBatchSize, kImgC, kImgH, kImgW>(batch.data);
             auto output = model.forward(input);
             auto loss   = torch::nn::functional::cross_entropy(output.t(),
                                                                batch.target);
@@ -101,7 +137,7 @@ void train_and_eval(Model& model, const std::string& data_path,
     model.eval();
     auto test_dataset = torch::data::datasets::MNIST(
             data_path, torch::data::datasets::MNIST::Mode::kTest)
-        .map(torch::data::transforms::Normalize<>(0.1307, 0.3081))
+        .map(torch::data::transforms::Normalize<>(kMnistMean, kMnistStd))
         .map(torch::data::transforms::Stack<>());
     auto test_loader = torch::data::make_data_loader(
         std::move(test_dataset),
@@ -111,7 +147,7 @@ void train_and_eval(Model& model, const std::string& data_path,
     {
         torch::NoGradGuard no_grad;
         for (auto& batch : *test_loader) {
-            auto input  = Tensor<kBatchSize, 1, 28, 28>(batch.data);
+            auto input  = Tensor<kBatchSize, kImgC, kImgH, kImgW>(batch.data);
             auto output = model.forward(input);
             auto pred   = output.t().argmax(1);
             correct += pred.eq(batch.target).sum().template item<int>();
