@@ -61,11 +61,11 @@ struct FCModel : torch::nn::Module {
         fc3 = register_module("fc3", torch::nn::Linear(kFCHidden2, kNumClasses));
     }
 
-    Tensor<kBatchSize, kNumClasses> forward(Tensor<kBatchSize, kImgC, kImgH, kImgW> input) {
-        auto flat = F::flatten<1, 3>(input);            // Tensor<kBatchSize, kImgPixels>
-        auto h1 = Tensor<kBatchSize, kFCHidden1>(fc1->forward(flat.t()));
-        auto h2 = Tensor<kBatchSize, kFCHidden2>(fc2->forward(F::relu(h1).t()));
-        return Tensor<kBatchSize, kNumClasses>(fc3->forward(F::relu(h2).t()));
+    BatchTensor<kNumClasses> forward(BatchTensor<kImgC, kImgH, kImgW> input) {
+        auto flat = F::flatten<0, 2>(input);             // BatchTensor<kImgPixels>
+        auto h1 = BatchTensor<kFCHidden1>(fc1->forward(flat.t()));
+        auto h2 = BatchTensor<kFCHidden2>(fc2->forward(h1.relu().t()));
+        return BatchTensor<kNumClasses>(fc3->forward(h2.relu().t()));
     }
 };
 
@@ -85,16 +85,16 @@ struct ConvNetModel : torch::nn::Module {
         fc = register_module("fc", torch::nn::Linear(kConvFlat, kNumClasses));
     }
 
-    Tensor<kBatchSize, kNumClasses> forward(Tensor<kBatchSize, kImgC, kImgH, kImgW> input) {
+    BatchTensor<kNumClasses> forward(BatchTensor<kImgC, kImgH, kImgW> input) {
         // Conv1 → relu → pool
-        auto c1 = Tensor<kBatchSize, kConv1Out, kConv1H, kConv1W>(conv1->forward(input.t()));
-        auto p1 = F::max_pool2d<kPool, kPool, kPool, kPool>(F::relu(c1));   // → <B,kConv1Out,kPool1H,kPool1W>
+        auto c1 = BatchTensor<kConv1Out, kConv1H, kConv1W>(conv1->forward(input.t()));
+        auto p1 = F::max_pool2d<kPool, kPool, kPool, kPool>(c1.relu());   // → <B,kConv1Out,kPool1H,kPool1W>
         // Conv2 → relu → pool
-        auto c2 = Tensor<kBatchSize, kConv2Out, kConv2H, kConv2W>(conv2->forward(p1.t()));
-        auto p2 = F::max_pool2d<kPool, kPool, kPool, kPool>(F::relu(c2));   // → <B,kConv2Out,kPool2H,kPool2W>
+        auto c2 = BatchTensor<kConv2Out, kConv2H, kConv2W>(conv2->forward(p1.t()));
+        auto p2 = F::max_pool2d<kPool, kPool, kPool, kPool>(c2.relu());   // → <B,kConv2Out,kPool2H,kPool2W>
         // Flatten → FC
-        auto flat = F::flatten<1, 3>(p2);                     // Tensor<kBatchSize, kConvFlat>
-        return Tensor<kBatchSize, kNumClasses>(fc->forward(flat.t()));
+        auto flat = F::flatten<0, 2>(p2);                     // BatchTensor<kConvFlat>
+        return BatchTensor<kNumClasses>(fc->forward(flat.t()));
     }
 };
 
@@ -110,7 +110,7 @@ void train_and_eval(Model& model, const std::string& data_path,
         .map(torch::data::transforms::Stack<>());
     auto train_loader = torch::data::make_data_loader(
         std::move(train_dataset),
-        torch::data::DataLoaderOptions().batch_size(kBatchSize).drop_last(true));
+        torch::data::DataLoaderOptions().batch_size(kBatchSize));
 
     torch::optim::Adam optimizer(model.parameters(), /*lr=*/kLR);
 
@@ -120,10 +120,9 @@ void train_and_eval(Model& model, const std::string& data_path,
         int batches = 0;
         for (auto& batch : *train_loader) {
             optimizer.zero_grad();
-            auto input  = Tensor<kBatchSize, kImgC, kImgH, kImgW>(batch.data);
+            auto input  = BatchTensor<kImgC, kImgH, kImgW>(batch.data);
             auto output = model.forward(input);
-            auto loss   = torch::nn::functional::cross_entropy(output.t(),
-                                                               batch.target);
+            auto loss   = F::cross_entropy(output, batch.target);
             loss.backward();
             optimizer.step();
             total_loss += loss.template item<double>();
@@ -141,17 +140,17 @@ void train_and_eval(Model& model, const std::string& data_path,
         .map(torch::data::transforms::Stack<>());
     auto test_loader = torch::data::make_data_loader(
         std::move(test_dataset),
-        torch::data::DataLoaderOptions().batch_size(kBatchSize).drop_last(true));
+        torch::data::DataLoaderOptions().batch_size(kBatchSize));
 
     int correct = 0, total = 0;
     {
         torch::NoGradGuard no_grad;
         for (auto& batch : *test_loader) {
-            auto input  = Tensor<kBatchSize, kImgC, kImgH, kImgW>(batch.data);
+            auto input  = BatchTensor<kImgC, kImgH, kImgW>(batch.data);
             auto output = model.forward(input);
             auto pred   = output.t().argmax(1);
             correct += pred.eq(batch.target).sum().template item<int>();
-            total   += kBatchSize;
+            total   += batch.data.size(0);
         }
     }
     std::printf("%s Test Accuracy: %.2f%%\n",

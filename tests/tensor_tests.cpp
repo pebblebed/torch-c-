@@ -1045,3 +1045,92 @@ TEST(IntegrationTest, TransformerEncoderBlock) {
     // Verify output is finite (no NaN/Inf from the attention computation)
     EXPECT_TRUE(torch::isfinite(output.t()).all().item<bool>());
 }
+
+// ============================================================
+// BatchTensor tests
+// ============================================================
+
+TEST(BatchTensorTest, Construction) {
+    auto raw = torch::randn({7, 3, 4});
+    BatchTensor<3, 4> bt(raw);
+    ASSERT_EQ(bt.batch_size(), 7);
+    ASSERT_EQ(bt.t().size(0), 7);
+    ASSERT_EQ(bt.t().size(1), 3);
+    ASSERT_EQ(bt.t().size(2), 4);
+}
+
+TEST(BatchTensorTest, ConstructionValidation) {
+    auto wrong = torch::randn({7, 3, 5});  // 5 != 4
+    EXPECT_THROW((BatchTensor<3, 4>(wrong)), std::runtime_error);
+}
+
+TEST(BatchTensorTest, Relu) {
+    auto raw = torch::randn({5, 8});
+    BatchTensor<8> bt(raw);
+    auto out = bt.relu();
+    ASSERT_EQ(out.batch_size(), 5);
+    ASSERT_EQ(out.t().size(1), 8);
+    // All values should be >= 0
+    EXPECT_TRUE((out.t() >= 0).all().item<bool>());
+}
+
+TEST(BatchTensorTest, Flatten) {
+    // BatchTensor<3, 4> flatten<0,1> → BatchTensor<12>
+    auto raw = torch::randn({7, 3, 4});
+    BatchTensor<3, 4> bt(raw);
+    auto flat = F::flatten<0, 1>(bt);
+    ASSERT_EQ(flat.batch_size(), 7);
+    ASSERT_EQ(flat.t().size(0), 7);
+    ASSERT_EQ(flat.t().size(1), 12);
+}
+
+TEST(BatchTensorTest, Conv2d) {
+    // BatchTensor<1, 8, 8> through conv2d with 3x3 kernel, 4 out channels
+    auto raw = torch::randn({5, 1, 8, 8});
+    BatchTensor<1, 8, 8> bt(raw);
+    auto weight = Tensor<4, 1, 3, 3>(torch::randn({4, 1, 3, 3}));
+    auto out = F::conv2d<1, 4, 8, 8, 3, 3>(bt, weight);
+    ASSERT_EQ(out.batch_size(), 5);
+    ASSERT_EQ(out.t().size(1), 4);  // out channels
+    ASSERT_EQ(out.t().size(2), 6);  // 8 - 3 + 1 = 6
+    ASSERT_EQ(out.t().size(3), 6);
+}
+
+TEST(BatchTensorTest, MatmulWeightSharing) {
+    // BatchTensor<4, 8> x Tensor<8, 16> → BatchTensor<4, 16>
+    auto a = BatchTensor<4, 8>(torch::randn({7, 4, 8}));
+    auto b = Tensor<8, 16>(torch::randn({8, 16}));
+    auto out = matmul(a, b);
+    ASSERT_EQ(out.batch_size(), 7);
+    ASSERT_EQ(out.t().size(1), 4);
+    ASSERT_EQ(out.t().size(2), 16);
+}
+
+TEST(BatchTensorTest, MatmulPerSample) {
+    // BatchTensor<4, 8> x BatchTensor<8, 16> → BatchTensor<4, 16>
+    auto a = BatchTensor<4, 8>(torch::randn({7, 4, 8}));
+    auto b = BatchTensor<8, 16>(torch::randn({7, 8, 16}));
+    auto out = matmul(a, b);
+    ASSERT_EQ(out.batch_size(), 7);
+    ASSERT_EQ(out.t().size(1), 4);
+    ASSERT_EQ(out.t().size(2), 16);
+}
+
+TEST(BatchTensorTest, BroadcastAdd) {
+    // BatchTensor<8> + Tensor<8> → BatchTensor<8>
+    auto bt = BatchTensor<8>(torch::ones({5, 8}));
+    auto t  = Tensor<8>(torch::ones({8}));
+    auto out = bt + t;
+    ASSERT_EQ(out.batch_size(), 5);
+    EXPECT_NEAR(out.t().sum().item<float>(), 80.0f, 1e-4f);  // 5*8*2 = 80
+}
+
+TEST(BatchTensorTest, Bind) {
+    auto raw = torch::randn({4, 6});
+    BatchTensor<6> bt(raw);
+    auto bound = bt.bind<4>();
+    ASSERT_EQ(bound.t().size(0), 4);
+    ASSERT_EQ(bound.t().size(1), 6);
+    // Wrong batch size should throw
+    EXPECT_THROW(bt.bind<5>(), std::runtime_error);
+}
