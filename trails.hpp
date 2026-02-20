@@ -1059,6 +1059,30 @@ scaled_dot_product_attention(Tensor<B, H, L, D> Q,
     return trails::scaled_dot_product_attention(Q, K, V);
 }
 
+// ---- Cross-entropy loss ----
+
+/*
+ * cross_entropy: static-batch version.
+ * Tensor<B,C> logits + Tensor<B> integer labels → scalar torch::Tensor.
+ */
+template<int B, int C>
+torch::Tensor cross_entropy(Tensor<B, C> input, Tensor<B> target) {
+    return torch::nn::functional::cross_entropy(
+        input.t(), target.t()
+    );
+}
+
+/*
+ * cross_entropy: dynamic-batch (BatchTensor) version.
+ * BatchTensor<C> logits + torch::Tensor integer labels → scalar torch::Tensor.
+ */
+template<int C>
+torch::Tensor cross_entropy(BatchTensor<C> input, torch::Tensor target) {
+    return torch::nn::functional::cross_entropy(
+        input.t(), target
+    );
+}
+
 }
 namespace detail {
 

@@ -71,11 +71,16 @@ class TorchWrapperLayer : public Module<InputTensorType, OutputTensorType> {
     }
 };
 
+// Primary variadic template — specializations below for static-batch (3 params)
+// and batch-agnostic (2 params).
+template<int ...Dims>
+class Linear;
+
 template<
     int B,
     int InDim,
     int OutDim>
-class Linear : public TorchWrapperLayer<Tensor<B, InDim>, Tensor<B, OutDim>, torch::nn::Linear> {
+class Linear<B, InDim, OutDim> : public TorchWrapperLayer<Tensor<B, InDim>, Tensor<B, OutDim>, torch::nn::Linear> {
     public:
     Linear()
     : TorchWrapperLayer<Tensor<B, InDim>, Tensor<B, OutDim>, torch::nn::Linear>(
@@ -88,18 +93,72 @@ class Linear : public TorchWrapperLayer<Tensor<B, InDim>, Tensor<B, OutDim>, tor
 };
 
 /*
- * LayerNorm: wraps torch::nn::LayerNorm.
- * Normalizes over the last sizeof...(Dims) dimensions.
- * Input/output shape: Tensor<B, Dims...>
+ * Batch-agnostic Linear: BatchTensor<InDim> → BatchTensor<OutDim>.
+ * Works with any batch size at runtime.
  */
-template<int B, int ...Dims>
-class LayerNorm : public TorchWrapperLayer<Tensor<B, Dims...>, Tensor<B, Dims...>, torch::nn::LayerNorm> {
-    using InputType = Tensor<B, Dims...>;
+template<int InDim, int OutDim>
+class Linear<InDim, OutDim> : public torch::nn::Module {
+    torch::nn::Linear inner_;
+public:
+    Linear()
+    : inner_(torch::nn::Linear(torch::nn::LinearOptions(InDim, OutDim)))
+    {
+        register_module("linear", inner_);
+    }
+
+    BatchTensor<OutDim> forward(BatchTensor<InDim> input) {
+        return BatchTensor<OutDim>(inner_->forward(input.t()));
+    }
+
+    std::vector<torch::Tensor> parameters() const {
+        return torch::nn::Module::parameters();
+    }
+};
+
+/*
+ * LayerNorm: primary variadic template — specializations below for
+ * static-batch (2+ params: B, Dims...) and batch-agnostic (1 param: Dim).
+ */
+template<int ...AllDims>
+class LayerNorm;
+
+/*
+ * Static-batch LayerNorm: wraps torch::nn::LayerNorm.
+ * Normalizes over the last sizeof...(Dims)+1 dimensions.
+ * Input/output shape: Tensor<B, FirstDim, RestDims...>
+ * Requires at least 2 template params (B + at least one normalization dim).
+ */
+template<int B, int FirstDim, int ...RestDims>
+class LayerNorm<B, FirstDim, RestDims...> : public TorchWrapperLayer<Tensor<B, FirstDim, RestDims...>, Tensor<B, FirstDim, RestDims...>, torch::nn::LayerNorm> {
+    using InputType = Tensor<B, FirstDim, RestDims...>;
     using Base = TorchWrapperLayer<InputType, InputType, torch::nn::LayerNorm>;
 public:
     LayerNorm()
-    : Base(torch::nn::LayerNorm(torch::nn::LayerNormOptions({Dims...})))
+    : Base(torch::nn::LayerNorm(torch::nn::LayerNormOptions({FirstDim, RestDims...})))
     {}
+};
+
+/*
+ * Batch-agnostic LayerNorm: BatchTensor<Dim> → BatchTensor<Dim>.
+ * Works with any batch size at runtime. Single normalization dimension.
+ */
+template<int Dim>
+class LayerNorm<Dim> : public torch::nn::Module {
+    torch::nn::LayerNorm inner_;
+public:
+    LayerNorm()
+    : inner_(torch::nn::LayerNorm(torch::nn::LayerNormOptions({Dim})))
+    {
+        register_module("layer_norm", inner_);
+    }
+
+    BatchTensor<Dim> forward(BatchTensor<Dim> input) {
+        return BatchTensor<Dim>(inner_->forward(input.t()));
+    }
+
+    std::vector<torch::Tensor> parameters() const {
+        return torch::nn::Module::parameters();
+    }
 };
 
 /*
