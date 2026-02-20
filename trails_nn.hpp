@@ -61,10 +61,10 @@ class TorchWrapperLayer : public Module<InputTensorType, OutputTensorType> {
     TorchLayerType layer;
     public:
     TorchWrapperLayer(TorchLayerType& lyr)
-    : layer(lyr) {}
+    : layer(torch::nn::Module::register_module("layer", lyr)) {}
 
     TorchWrapperLayer(auto ...args)
-    : layer(args...) {}
+    : layer(torch::nn::Module::register_module("layer", TorchLayerType(args...))) {}
 
     OutputTensorType forward(InputTensorType input) override {
         return { layer->forward(input.t()) };
