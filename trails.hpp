@@ -199,8 +199,9 @@ struct replace_dim {
 
 } // namespace detail
 
-// Forward declaration for seq_to_tensor
+// Forward declarations
 template<int ...Dims> struct Tensor;
+template<int ...Dims> struct BatchTensor;
 
 namespace detail {
 
@@ -211,6 +212,22 @@ struct seq_to_tensor;
 template<size_t... Vals>
 struct seq_to_tensor<val_sequence<size_t, Vals...>> {
     using type = Tensor<static_cast<int>(Vals)...>;
+};
+
+// seq_to_batch_tensor: convert a val_sequence<size_t, ...> to a BatchTensor<int, ...> type
+template<typename Seq>
+struct seq_to_batch_tensor;
+
+template<size_t... Vals>
+struct seq_to_batch_tensor<val_sequence<size_t, Vals...>> {
+    using type = BatchTensor<static_cast<int>(Vals)...>;
+};
+
+// tensor_to_batch: convert Tensor<Dims...> to BatchTensor<Dims...>
+template<typename T> struct tensor_to_batch;
+template<int ...Dims>
+struct tensor_to_batch<Tensor<Dims...>> {
+    using type = BatchTensor<Dims...>;
 };
 
 } // namespace detail
@@ -375,6 +392,16 @@ struct Tensor {
         return result_t{ t_.squeeze(D) };
     }
 
+    // unbatch: treat first dim as batch → BatchTensor<remaining dims>
+    // Only valid when there is at least 1 dimension.
+    auto unbatch() const {
+        static_assert(dim() >= 1, "unbatch: need at least 1 dimension");
+        // Remove the first dim from the sequence to get the mathematical dims
+        using math_seq = typename detail::remove_dim<seq_t, 0>::type;
+        using result_t = typename detail::seq_to_batch_tensor<math_seq>::type;
+        return result_t{ t_ };
+    }
+
     private:
     torch::Tensor t_;
 };
@@ -406,6 +433,179 @@ operator/(ftype f, Tensor<Dims...> t) {
 
 using Scalar = Tensor<>;
 
+// ---- BatchTensor: a batch of identically-shaped tensors ----
+// BatchTensor<Dims...> represents N independent Tensor<Dims...> objects.
+// The mathematical shape is [Dims...]; the batch size is runtime.
+// The underlying torch::Tensor has shape [batch_size, Dims...].
+
+namespace detail {
+// compare_sizes with offset: check t.sizes()[offset:] == {Dims...}
+template<typename Seq, int64_t i, int64_t offset>
+struct compare_sizes_offset_t {
+    static bool compare(torch::IntArrayRef sizes) {
+        return Seq::template get<i>::value == sizes[i + offset] &&
+            compare_sizes_offset_t<Seq, i - 1, offset>::compare(sizes);
+    }
+};
+
+template<typename Seq, int64_t offset>
+struct compare_sizes_offset_t<Seq, -1, offset> {
+    static bool compare(torch::IntArrayRef) { return true; }
+};
+} // namespace detail
+
+template<int ...Dims>
+struct BatchTensor {
+    using inner_t = Tensor<Dims...>;
+    using seq_t = typename inner_t::seq_t;
+    constexpr static size_t math_dim() { return sizeof...(Dims); }
+
+    // Construct from a dynamic torch::Tensor.
+    // Validates that t.sizes()[1:] == {Dims...} and stores batch_size = t.size(0).
+    BatchTensor(torch::Tensor t) : t_(t), batch_size_(t.size(0)) {
+        constexpr int ndim = sizeof...(Dims);
+        if (t.dim() != ndim + 1) {
+            throw std::runtime_error(
+                "BatchTensor dim mismatch: expected " + std::to_string(ndim + 1) +
+                " but got " + std::to_string(t.dim()));
+        }
+        if (!detail::compare_sizes_offset_t<seq_t, int64_t(ndim) - 1, 1>::compare(t.sizes())) {
+            throw std::runtime_error(
+                "BatchTensor shape mismatch: got " + detail::str(t.sizes()) +
+                " but expected [B, " + seq_t::str() + "]");
+        }
+    }
+
+    int64_t batch_size() const { return batch_size_; }
+    torch::Tensor t() const { return t_; }
+    torch::Tensor data() const { return t_; }
+
+    // Promote to static tensor — runtime checks batch_size_ == B
+    template<int B>
+    Tensor<B, Dims...> bind() const {
+        if (batch_size_ != B) {
+            throw std::runtime_error(
+                "BatchTensor::bind: expected batch_size " + std::to_string(B) +
+                " but got " + std::to_string(batch_size_));
+        }
+        return Tensor<B, Dims...>(t_);
+    }
+
+    // Collapse batch via mean → static Tensor<Dims...>
+    Tensor<Dims...> batch_mean() const {
+        return Tensor<Dims...>(t_.mean(0));
+    }
+
+    // Reshape the mathematical dims (batch dim is unchanged)
+    template<int ...NewDims>
+    BatchTensor<NewDims...> reshape() const {
+        static_assert((static_cast<int64_t>(Dims) * ...) == (static_cast<int64_t>(NewDims) * ...),
+            "BatchTensor::reshape: number of elements must match");
+        return BatchTensor<NewDims...>{ t_.reshape({batch_size_, NewDims...}) };
+    }
+
+    // Activations — element-wise, shape-preserving
+    BatchTensor relu() const  { return { torch::relu(t_) }; }
+    BatchTensor gelu() const  { return { torch::gelu(t_) }; }
+    BatchTensor sigmoid() const { return { torch::sigmoid(t_) }; }
+    BatchTensor tanh() const  { return { torch::tanh(t_) }; }
+
+    template<int64_t D>
+    BatchTensor softmax() const {
+        static_assert(D >= 0 && D < (int64_t)math_dim(), "softmax: dim out of range");
+        return { torch::softmax(t_, D + 1) };  // +1 for batch offset
+    }
+
+    template<int64_t D>
+    BatchTensor log_softmax() const {
+        static_assert(D >= 0 && D < (int64_t)math_dim(), "log_softmax: dim out of range");
+        return { torch::log_softmax(t_, D + 1) };  // +1 for batch offset
+    }
+
+    // Elementwise binary ops — BatchTensor op BatchTensor
+    BatchTensor operator+(const BatchTensor& o) const { return { t_ + o.t_ }; }
+    BatchTensor operator-(const BatchTensor& o) const { return { t_ - o.t_ }; }
+    BatchTensor operator*(const BatchTensor& o) const { return { t_ * o.t_ }; }
+    BatchTensor operator/(const BatchTensor& o) const { return { t_ / o.t_ }; }
+
+    // Scalar ops
+    BatchTensor operator*(float s) const { return { t_ * s }; }
+    BatchTensor operator/(float s) const { return { t_ / s }; }
+
+    // Elementwise math (shape-preserving)
+    BatchTensor exp() const { return { t_.exp() }; }
+    BatchTensor log() const { return { t_.log() }; }
+    BatchTensor sqrt() const { return { t_.sqrt() }; }
+
+    // Transpose: swap mathematical dims D1 and D2 (NOT the batch dim)
+    // The actual torch dims are D1+1 and D2+1 (offset by batch dim)
+    template<int D1, int D2>
+    auto transpose() const {
+        static_assert(D1 >= 0 && D1 < (int)math_dim(), "transpose D1 out of range");
+        static_assert(D2 >= 0 && D2 < (int)math_dim(), "transpose D2 out of range");
+        using new_seq = typename detail::swap_dims<seq_t, D1, D2>::type;
+        using result_t = typename detail::seq_to_batch_tensor<new_seq>::type;
+        return result_t{ t_.transpose(D1 + 1, D2 + 1) };
+    }
+
+    friend std::ostream& operator<<(std::ostream& os, const BatchTensor& bt) {
+        os << "BatchTensor[B=" << bt.batch_size_ << "] " << bt.t_;
+        return os;
+    }
+
+private:
+    torch::Tensor t_;
+    int64_t batch_size_;
+};
+
+// Free function unbatch: Tensor<B, Dims...> → BatchTensor<Dims...>
+template<int B, int ...Dims>
+BatchTensor<Dims...> unbatch(Tensor<B, Dims...> t) {
+    return BatchTensor<Dims...>(t.t());
+}
+
+// Scalar * BatchTensor
+template<int ...Dims>
+BatchTensor<Dims...> operator*(float s, BatchTensor<Dims...> bt) {
+    return { bt.t() * s };
+}
+
+// Broadcasting operators: BatchTensor op Tensor (broadcast static tensor over batch)
+template<int ...Dims>
+BatchTensor<Dims...> operator+(BatchTensor<Dims...> a, Tensor<Dims...> b) {
+    return { a.t() + b.t() };
+}
+template<int ...Dims>
+BatchTensor<Dims...> operator-(BatchTensor<Dims...> a, Tensor<Dims...> b) {
+    return { a.t() - b.t() };
+}
+template<int ...Dims>
+BatchTensor<Dims...> operator*(BatchTensor<Dims...> a, Tensor<Dims...> b) {
+    return { a.t() * b.t() };
+}
+template<int ...Dims>
+BatchTensor<Dims...> operator/(BatchTensor<Dims...> a, Tensor<Dims...> b) {
+    return { a.t() / b.t() };
+}
+
+// Reverse: Tensor op BatchTensor
+template<int ...Dims>
+BatchTensor<Dims...> operator+(Tensor<Dims...> a, BatchTensor<Dims...> b) {
+    return { a.t() + b.t() };
+}
+template<int ...Dims>
+BatchTensor<Dims...> operator-(Tensor<Dims...> a, BatchTensor<Dims...> b) {
+    return { a.t() - b.t() };
+}
+template<int ...Dims>
+BatchTensor<Dims...> operator*(Tensor<Dims...> a, BatchTensor<Dims...> b) {
+    return { a.t() * b.t() };
+}
+template<int ...Dims>
+BatchTensor<Dims...> operator/(Tensor<Dims...> a, BatchTensor<Dims...> b) {
+    return { a.t() / b.t() };
+}
+
 // matmul: 2D case Tensor<M,K> x Tensor<K,N> -> Tensor<M,N>
 template<int M, int K, int N>
 Tensor<M, N> matmul(Tensor<M, K> a, Tensor<K, N> b) {
@@ -422,6 +622,18 @@ Tensor<B, M, N> matmul(Tensor<B, M, K> a, Tensor<B, K, N> b) {
 template<int B, int H, int M, int K, int N>
 Tensor<B, H, M, N> matmul(Tensor<B, H, M, K> a, Tensor<B, H, K, N> b) {
     return Tensor<B, H, M, N>{ torch::matmul(a.t(), b.t()) };
+}
+
+// matmul: Weight-sharing: BatchTensor<M,K> x Tensor<K,N> → BatchTensor<M,N>
+template<int M, int K, int N>
+BatchTensor<M, N> matmul(BatchTensor<M, K> a, Tensor<K, N> b) {
+    return { torch::matmul(a.t(), b.t()) };
+}
+
+// matmul: Per-sample: BatchTensor<M,K> x BatchTensor<K,N> → BatchTensor<M,N>
+template<int M, int K, int N>
+BatchTensor<M, N> matmul(BatchTensor<M, K> a, BatchTensor<K, N> b) {
+    return { torch::matmul(a.t(), b.t()) };
 }
 
 // scaled_dot_product_attention:
@@ -518,6 +730,34 @@ Tensor<
     ((input_height + 2 * padding - dilation * (kernel_height - 1) - 1) / stride + 1),
     ((input_width  + 2 * padding - dilation * (kernel_width  - 1) - 1) / stride + 1)>
 conv2d(Tensor<B, in_channels, input_height, input_width> input,
+       Tensor<out_channels, in_channels / groups, kernel_height, kernel_width> weights,
+       std::optional<Tensor<out_channels>> bias = std::nullopt) {
+    return { torch::conv2d(input.t(), weights.t(),
+                           bias ? bias->t() : torch::Tensor(),
+                           /*stride*/ torch::IntArrayRef{stride},
+                           /*padding*/ torch::IntArrayRef{padding},
+                           /*dilation*/ torch::IntArrayRef{dilation},
+                           /*groups*/ groups)
+    };
+}
+
+// conv2d for BatchTensor: BatchTensor<InC, H, W> + weight Tensor<OutC, InC/G, KH, KW>
+template<
+    int in_channels,
+    int out_channels,
+    int input_height,
+    int input_width,
+    int kernel_height,
+    int kernel_width,
+    int groups=1,
+    int stride=1,
+    int padding=0,
+    int dilation=1>
+BatchTensor<
+    out_channels,
+    ((input_height + 2 * padding - dilation * (kernel_height - 1) - 1) / stride + 1),
+    ((input_width  + 2 * padding - dilation * (kernel_width  - 1) - 1) / stride + 1)>
+conv2d(BatchTensor<in_channels, input_height, input_width> input,
        Tensor<out_channels, in_channels / groups, kernel_height, kernel_width> weights,
        std::optional<Tensor<out_channels>> bias = std::nullopt) {
     return { torch::conv2d(input.t(), weights.t(),
@@ -626,6 +866,22 @@ max_pool2d(Tensor<B, C, H, W> input) {
                                /*stride=*/{StrideH, StrideW}) };
 }
 
+// max_pool2d for BatchTensor: BatchTensor<C, H, W> → BatchTensor<C, outH, outW>
+template<
+    int KernelH,
+    int KernelW,
+    int StrideH,
+    int StrideW,
+    int C,
+    int H,
+    int W>
+BatchTensor<C, ((H - KernelH) / StrideH + 1), ((W - KernelW) / StrideW + 1)>
+max_pool2d(BatchTensor<C, H, W> input) {
+    return { torch::max_pool2d(input.t(),
+                               /*kernel_size=*/{KernelH, KernelW},
+                               /*stride=*/{StrideH, StrideW}) };
+}
+
 /*
  * avg_pool1d: 1D average pooling with compile-time shape propagation.
  * Input: Tensor<B, C, L> -> Output: Tensor<B, C, (L - KernelSize) / Stride + 1>
@@ -658,6 +914,22 @@ template<
     int W>
 Tensor<B, C, ((H - KernelH) / StrideH + 1), ((W - KernelW) / StrideW + 1)>
 avg_pool2d(Tensor<B, C, H, W> input) {
+    return { torch::avg_pool2d(input.t(),
+                               /*kernel_size=*/{KernelH, KernelW},
+                               /*stride=*/{StrideH, StrideW}) };
+}
+
+// avg_pool2d for BatchTensor: BatchTensor<C, H, W> → BatchTensor<C, outH, outW>
+template<
+    int KernelH,
+    int KernelW,
+    int StrideH,
+    int StrideW,
+    int C,
+    int H,
+    int W>
+BatchTensor<C, ((H - KernelH) / StrideH + 1), ((W - KernelW) / StrideW + 1)>
+avg_pool2d(BatchTensor<C, H, W> input) {
     return { torch::avg_pool2d(input.t(),
                                /*kernel_size=*/{KernelH, KernelW},
                                /*stride=*/{StrideH, StrideW}) };
@@ -715,6 +987,21 @@ auto flatten(Tensor<Dims...> input) {
     return result_t{ torch::flatten(input.t(), StartDim, EndDim) };
 }
 
+/*
+ * flatten<StartDim, EndDim> for BatchTensor: flatten mathematical dims.
+ * StartDim/EndDim are over the mathematical (non-batch) dims.
+ * The underlying torch dims are StartDim+1, EndDim+1 (offset by batch).
+ */
+template<int StartDim, int EndDim, int ...Dims>
+auto flatten(BatchTensor<Dims...> input) {
+    constexpr int ndim = sizeof...(Dims);
+    static_assert(StartDim >= 0 && StartDim < ndim, "flatten: StartDim out of range");
+    static_assert(EndDim >= StartDim && EndDim < ndim, "flatten: EndDim out of range");
+    using inner_result_t = typename detail::flatten_result<StartDim, EndDim, Dims...>::type;
+    using result_t = typename detail::tensor_to_batch<inner_result_t>::type;
+    return result_t{ torch::flatten(input.t(), StartDim + 1, EndDim + 1) };
+}
+
 // ---- Functional linear ----
 
 /*
@@ -736,6 +1023,28 @@ linear(Tensor<M, InDim> input, Tensor<OutDim, InDim> weight,
 template<int B, int SeqLen, int InDim, int OutDim>
 Tensor<B, SeqLen, OutDim>
 linear(Tensor<B, SeqLen, InDim> input, Tensor<OutDim, InDim> weight,
+       std::optional<Tensor<OutDim>> bias = std::nullopt) {
+    return { torch::nn::functional::linear(input.t(), weight.t(),
+             bias ? bias->t() : torch::Tensor()) };
+}
+
+/*
+ * linear for BatchTensor: BatchTensor<InDim> x Tensor<OutDim, InDim> → BatchTensor<OutDim>
+ */
+template<int InDim, int OutDim>
+BatchTensor<OutDim>
+linear(BatchTensor<InDim> input, Tensor<OutDim, InDim> weight,
+       std::optional<Tensor<OutDim>> bias = std::nullopt) {
+    return { torch::nn::functional::linear(input.t(), weight.t(),
+             bias ? bias->t() : torch::Tensor()) };
+}
+
+/*
+ * linear for BatchTensor (3D): BatchTensor<SeqLen, InDim> x Tensor<OutDim, InDim> → BatchTensor<SeqLen, OutDim>
+ */
+template<int SeqLen, int InDim, int OutDim>
+BatchTensor<SeqLen, OutDim>
+linear(BatchTensor<SeqLen, InDim> input, Tensor<OutDim, InDim> weight,
        std::optional<Tensor<OutDim>> bias = std::nullopt) {
     return { torch::nn::functional::linear(input.t(), weight.t(),
              bias ? bias->t() : torch::Tensor()) };
