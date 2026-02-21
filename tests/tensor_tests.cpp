@@ -1498,6 +1498,121 @@ TEST(BatchTensorTest, CrossEntropyStaticBatch) {
     EXPECT_GT(loss.item<float>(), 0.0f);
 }
 
+TEST(CrossEntropyTest, StaticBatchKnownValues) {
+    // Hand-crafted logits: sample 0 has high logit at class 2,
+    // sample 1 has high logit at class 0.
+    auto logits_raw = torch::zeros({2, 4});
+    logits_raw[0][2] = 10.0f;  // strong prediction for class 2
+    logits_raw[1][0] = 10.0f;  // strong prediction for class 0
+    auto logits = Tensor<2, 4>(logits_raw);
+    auto labels = Tensor<2>(torch::tensor({2, 0}, torch::kLong));
+    auto loss = F::cross_entropy(logits, labels);
+    ASSERT_EQ(loss.dim(), 0);
+    // Correct predictions with high confidence → loss near 0
+    EXPECT_LT(loss.item<float>(), 0.01f);
+}
+
+TEST(CrossEntropyTest, StaticBatchWrongLabels) {
+    // High-confidence predictions but wrong labels → high loss
+    auto logits_raw = torch::zeros({2, 4});
+    logits_raw[0][2] = 10.0f;  // predicts class 2
+    logits_raw[1][0] = 10.0f;  // predicts class 0
+    auto logits = Tensor<2, 4>(logits_raw);
+    auto labels = Tensor<2>(torch::tensor({0, 2}, torch::kLong));  // wrong!
+    auto loss = F::cross_entropy(logits, labels);
+    ASSERT_EQ(loss.dim(), 0);
+    EXPECT_GT(loss.item<float>(), 5.0f);  // should be large
+}
+
+TEST(CrossEntropyTest, StaticBatchUniformInput) {
+    // Uniform logits → loss = log(num_classes)
+    constexpr int B = 8;
+    constexpr int C = 10;
+    auto logits = Tensor<B, C>(torch::zeros({B, C}));
+    auto labels = Tensor<B>(torch::randint(0, C, {B}, torch::kLong));
+    auto loss = F::cross_entropy(logits, labels);
+    ASSERT_EQ(loss.dim(), 0);
+    float expected = std::log(static_cast<float>(C));  // log(10) ≈ 2.3026
+    EXPECT_NEAR(loss.item<float>(), expected, 1e-4f);
+}
+
+TEST(CrossEntropyTest, StaticBatchNonNegative) {
+    // Cross-entropy loss must always be non-negative
+    for (int trial = 0; trial < 5; trial++) {
+        auto logits = Tensor<4, 6>(torch::randn({4, 6}));
+        auto labels = Tensor<4>(torch::randint(0, 6, {4}, torch::kLong));
+        auto loss = F::cross_entropy(logits, labels);
+        ASSERT_EQ(loss.dim(), 0);
+        EXPECT_GE(loss.item<float>(), 0.0f);
+    }
+}
+
+TEST(CrossEntropyTest, DynamicBatchKnownValues) {
+    // Same known-value test but with BatchTensor
+    auto logits_raw = torch::zeros({2, 4});
+    logits_raw[0][2] = 10.0f;
+    logits_raw[1][0] = 10.0f;
+    auto logits = BatchTensor<4>(logits_raw);
+    auto labels = torch::tensor({2, 0}, torch::kLong);
+    auto loss = F::cross_entropy(logits, labels);
+    ASSERT_EQ(loss.dim(), 0);
+    EXPECT_LT(loss.item<float>(), 0.01f);
+}
+
+TEST(CrossEntropyTest, DynamicBatchWrongLabels) {
+    auto logits_raw = torch::zeros({2, 4});
+    logits_raw[0][2] = 10.0f;
+    logits_raw[1][0] = 10.0f;
+    auto logits = BatchTensor<4>(logits_raw);
+    auto labels = torch::tensor({0, 2}, torch::kLong);
+    auto loss = F::cross_entropy(logits, labels);
+    ASSERT_EQ(loss.dim(), 0);
+    EXPECT_GT(loss.item<float>(), 5.0f);
+}
+
+TEST(CrossEntropyTest, DynamicBatchUniformInput) {
+    // Uniform logits → loss = log(num_classes)
+    constexpr int C = 10;
+    auto logits = BatchTensor<C>(torch::zeros({8, C}));
+    auto labels = torch::randint(0, C, {8}, torch::kLong);
+    auto loss = F::cross_entropy(logits, labels);
+    ASSERT_EQ(loss.dim(), 0);
+    float expected = std::log(static_cast<float>(C));
+    EXPECT_NEAR(loss.item<float>(), expected, 1e-4f);
+}
+
+TEST(CrossEntropyTest, DynamicBatchNonNegative) {
+    for (int trial = 0; trial < 5; trial++) {
+        auto logits = BatchTensor<6>(torch::randn({4, 6}));
+        auto labels = torch::randint(0, 6, {4}, torch::kLong);
+        auto loss = F::cross_entropy(logits, labels);
+        ASSERT_EQ(loss.dim(), 0);
+        EXPECT_GE(loss.item<float>(), 0.0f);
+    }
+}
+
+TEST(CrossEntropyTest, DynamicBatchVaryingBatchSize) {
+    // Verify it works with different batch sizes (the whole point of BatchTensor)
+    for (int bs : {1, 3, 7, 16}) {
+        auto logits = BatchTensor<5>(torch::randn({bs, 5}));
+        auto labels = torch::randint(0, 5, {bs}, torch::kLong);
+        auto loss = F::cross_entropy(logits, labels);
+        ASSERT_EQ(loss.dim(), 0);
+        EXPECT_GT(loss.item<float>(), 0.0f);
+    }
+}
+
+TEST(CrossEntropyTest, StaticAndDynamicAgree) {
+    // Both overloads should produce the same loss for the same data
+    auto raw_logits = torch::randn({4, 10});
+    auto raw_labels = torch::randint(0, 10, {4}, torch::kLong);
+    auto static_loss = F::cross_entropy(
+        Tensor<4, 10>(raw_logits), Tensor<4>(raw_labels));
+    auto dynamic_loss = F::cross_entropy(
+        BatchTensor<10>(raw_logits), raw_labels);
+    EXPECT_NEAR(static_loss.item<float>(), dynamic_loss.item<float>(), 1e-5f);
+}
+
 // ============================================================
 // Task 5: Batch-agnostic nn module tests
 // ============================================================
@@ -1537,6 +1652,26 @@ TEST(BatchAgnosticTest, LayerNormBasic) {
     auto out = ln.forward(input);
     ASSERT_EQ(out.batch_size(), 5);
     ASSERT_EQ(out.t().size(1), 32);
+}
+
+TEST(BatchAgnosticTest, LayerNormDifferentBatchSizes) {
+    trails::nn::LayerNorm<32> ln;
+    // Same module, different batch sizes
+    auto out3 = ln.forward(BatchTensor<32>(torch::randn({3, 32})));
+    ASSERT_EQ(out3.batch_size(), 3);
+    auto out7 = ln.forward(BatchTensor<32>(torch::randn({7, 32})));
+    ASSERT_EQ(out7.batch_size(), 7);
+    auto out1 = ln.forward(BatchTensor<32>(torch::randn({1, 32})));
+    ASSERT_EQ(out1.batch_size(), 1);
+}
+
+TEST(BatchAgnosticTest, LayerNormParameters) {
+    trails::nn::LayerNorm<32> ln;
+    auto params = ln.parameters();
+    ASSERT_EQ(params.size(), 2u);  // weight + bias
+    // Both weight and bias shape: [32]
+    EXPECT_EQ(params[0].size(0), 32);
+    EXPECT_EQ(params[1].size(0), 32);
 }
 
 TEST(BatchAgnosticTest, LayerNormNormalization) {
