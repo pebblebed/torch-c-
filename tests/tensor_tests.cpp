@@ -1548,3 +1548,233 @@ TEST(BatchAgnosticTest, LayerNormNormalization) {
         EXPECT_NEAR(sample.var().item<float>(), 1.0f, 0.02f);
     }
 }
+
+
+// ============================================================
+// Edge cases: Tensor construction, methods, and misc
+// ============================================================
+
+TEST(EdgeCaseTest, TensorDefaultConstructor) {
+    // Default constructor fills with randn — just check shape is right
+    Tensor<3, 4> t;
+    ASSERT_EQ(t.t().size(0), 3);
+    ASSERT_EQ(t.t().size(1), 4);
+    ASSERT_EQ(t.t().dim(), 2);
+}
+
+TEST(EdgeCaseTest, TensorConstructorMismatch) {
+    // Wrong shape should throw
+    auto raw = torch::randn({3, 5});
+    EXPECT_THROW((Tensor<3, 4>(raw)), std::runtime_error);
+    // Wrong number of dims
+    auto raw2 = torch::randn({3, 4, 5});
+    EXPECT_THROW((Tensor<3, 4>(raw2)), std::runtime_error);
+    // Correct shape should not throw
+    auto raw3 = torch::randn({3, 4});
+    EXPECT_NO_THROW((Tensor<3, 4>(raw3)));
+}
+
+TEST(EdgeCaseTest, ArangeDefault) {
+    // arange(start=0) → [0, 1, 2, ..., numel-1] reshaped
+    auto t0 = Tensor<2, 3>::arange(0);
+    ASSERT_EQ(t0.t().size(0), 2);
+    ASSERT_EQ(t0.t().size(1), 3);
+    EXPECT_NEAR(t0.t()[0][0].item<float>(), 0.0f, 1e-5f);
+    EXPECT_NEAR(t0.t()[0][1].item<float>(), 1.0f, 1e-5f);
+    EXPECT_NEAR(t0.t()[1][2].item<float>(), 5.0f, 1e-5f);
+
+    // Default arg (start=0) should be equivalent
+    auto t_default = Tensor<2, 3>::arange();
+    EXPECT_NEAR(t_default.t()[0][0].item<float>(), 0.0f, 1e-5f);
+    EXPECT_NEAR(t_default.t()[1][2].item<float>(), 5.0f, 1e-5f);
+
+    // 1D arange
+    auto t1d = Tensor<5>::arange();
+    ASSERT_EQ(t1d.t().size(0), 5);
+    for (int i = 0; i < 5; i++) {
+        EXPECT_NEAR(t1d.t()[i].item<float>(), (float)i, 1e-5f);
+    }
+
+    // Note: arange(start>0) doesn't work for small tensors since it generates
+    // fewer than numel() elements — this is a known API limitation.
+}
+
+TEST(EdgeCaseTest, Rsqrt) {
+    auto t = Tensor<4>(torch::ones({4}) * 4.0f);
+    auto out = t.rsqrt();
+    // rsqrt(4) = 1/sqrt(4) = 0.5
+    ASSERT_EQ(out.t().size(0), 4);
+    for (int i = 0; i < 4; i++) {
+        EXPECT_NEAR(out.t()[i].item<float>(), 0.5f, 1e-5f);
+    }
+}
+
+TEST(EdgeCaseTest, Max) {
+    auto t = Tensor<3, 4>(torch::arange(12.0f).reshape({3, 4}));
+    auto m = t.max();
+    // max() returns Tensor<> (scalar)
+    ASSERT_EQ(m.dim(), 0);
+    EXPECT_NEAR(m.t().item<float>(), 11.0f, 1e-5f);
+}
+
+TEST(EdgeCaseTest, TensorStr) {
+    auto t = Tensor<2>(torch::ones({2}));
+    std::string s = t.str();
+    // Should contain the tensor values — "1" should appear
+    EXPECT_FALSE(s.empty());
+    EXPECT_NE(s.find("1"), std::string::npos);
+}
+
+TEST(EdgeCaseTest, TensorStreamOutput) {
+    auto t = Tensor<2>(torch::ones({2}));
+    std::ostringstream oss;
+    oss << t;
+    EXPECT_FALSE(oss.str().empty());
+}
+
+TEST(EdgeCaseTest, Item) {
+    // Single-element tensor → item<float>()
+    auto t = Tensor<1>(torch::ones({1}) * 42.0f);
+    EXPECT_NEAR(t.item<float>(), 42.0f, 1e-5f);
+    EXPECT_EQ(t.item<int>(), 42);
+}
+
+TEST(EdgeCaseTest, DataPtr) {
+    auto t = Tensor<4>(torch::ones({4}) * 7.0f);
+    const float* ptr = t.data_ptr<float>();
+    ASSERT_NE(ptr, nullptr);
+    for (int i = 0; i < 4; i++) {
+        EXPECT_NEAR(ptr[i], 7.0f, 1e-5f);
+    }
+}
+
+TEST(EdgeCaseTest, Numel) {
+    EXPECT_EQ((Tensor<3, 4>::numel()), 12u);
+    EXPECT_EQ((Tensor<2, 3, 5>::numel()), 30u);
+    EXPECT_EQ((Tensor<1>::numel()), 1u);
+    // Note: Tensor<>::numel() doesn't compile (empty fold expression) — by design
+}
+
+TEST(EdgeCaseTest, ScalarAlias) {
+    // Scalar is Tensor<>
+    Scalar s(torch::tensor(3.14f));
+    ASSERT_EQ(s.dim(), 0);
+    EXPECT_NEAR(s.item<float>(), 3.14f, 1e-4f);
+}
+
+TEST(EdgeCaseTest, ReverseScalarOps) {
+    auto t = Tensor<4>(torch::ones({4}) * 2.0f);
+    // float + Tensor
+    auto add = 10.0f + t;
+    EXPECT_NEAR(add.t().sum().item<float>(), 48.0f, 1e-5f);  // 4*12
+    // float - Tensor
+    auto sub = 10.0f - t;
+    EXPECT_NEAR(sub.t().sum().item<float>(), 32.0f, 1e-5f);  // 4*8
+    // float * Tensor
+    auto mul = 3.0f * t;
+    EXPECT_NEAR(mul.t().sum().item<float>(), 24.0f, 1e-5f);  // 4*6
+    // float / Tensor
+    auto div = 10.0f / t;
+    EXPECT_NEAR(div.t().sum().item<float>(), 20.0f, 1e-5f);  // 4*5
+}
+
+
+// ============================================================
+// Edge cases: BatchTensor boundary conditions
+// ============================================================
+
+TEST(EdgeCaseTest, BatchTensorSingleSample) {
+    // batch_size=1 is a degenerate but valid case
+    auto raw = torch::randn({1, 8});
+    BatchTensor<8> bt(raw);
+    ASSERT_EQ(bt.batch_size(), 1);
+    // All ops should still work
+    auto out = bt.relu();
+    ASSERT_EQ(out.batch_size(), 1);
+    auto mean = bt.batch_mean();
+    ASSERT_EQ(mean.dim(), 1);
+    ASSERT_EQ(mean.t().size(0), 8);
+    // bind<1> should succeed
+    auto bound = bt.bind<1>();
+    ASSERT_EQ(bound.t().size(0), 1);
+}
+
+TEST(EdgeCaseTest, BatchTensorDimMismatch) {
+    // 1D tensor should fail for BatchTensor<8> (needs 2D: [B, 8])
+    auto raw1d = torch::randn({8});
+    EXPECT_THROW((BatchTensor<8>(raw1d)), std::runtime_error);
+    // 3D tensor should fail for BatchTensor<8> (needs 2D: [B, 8])
+    auto raw3d = torch::randn({2, 8, 3});
+    EXPECT_THROW((BatchTensor<8>(raw3d)), std::runtime_error);
+}
+
+TEST(EdgeCaseTest, BatchTensorHighDim) {
+    // BatchTensor with 3 mathematical dims
+    auto raw = torch::randn({4, 2, 3, 5});
+    BatchTensor<2, 3, 5> bt(raw);
+    ASSERT_EQ(bt.batch_size(), 4);
+    ASSERT_EQ(bt.t().dim(), 4);
+    // Activations
+    auto r = bt.relu();
+    ASSERT_EQ(r.batch_size(), 4);
+    ASSERT_EQ(r.t().size(1), 2);
+    ASSERT_EQ(r.t().size(2), 3);
+    ASSERT_EQ(r.t().size(3), 5);
+    // batch_mean collapses to Tensor<2,3,5>
+    auto m = bt.batch_mean();
+    ASSERT_EQ(m.dim(), 3);
+    ASSERT_EQ(m.t().size(0), 2);
+    ASSERT_EQ(m.t().size(1), 3);
+    ASSERT_EQ(m.t().size(2), 5);
+}
+
+TEST(EdgeCaseTest, BatchTensorLargeBatch) {
+    // Stress test with large batch — shape checks still work
+    auto raw = torch::randn({1000, 4});
+    BatchTensor<4> bt(raw);
+    ASSERT_EQ(bt.batch_size(), 1000);
+    auto out = bt.sigmoid();
+    ASSERT_EQ(out.batch_size(), 1000);
+    EXPECT_TRUE((out.t() > 0).all().item<bool>());
+    EXPECT_TRUE((out.t() < 1).all().item<bool>());
+}
+
+// ============================================================
+// Edge cases: nn pipe operator and Sequential
+// ============================================================
+
+TEST(EdgeCaseTest, PipeOperator) {
+    // x | module should be equivalent to module.forward(x)
+    trails::nn::Linear<4, 8, 16> linear;
+    auto x = Tensor<4, 8>::randn();
+    auto y_pipe = x | linear;
+    auto y_fwd  = linear.forward(x);
+    // Both should have same shape
+    ASSERT_EQ(y_pipe.t().size(0), 4);
+    ASSERT_EQ(y_pipe.t().size(1), 16);
+    // Same values (same weights, same input)
+    EXPECT_TRUE(torch::equal(y_pipe.t(), y_fwd.t()));
+}
+
+TEST(EdgeCaseTest, TensorOperatorWithRawTensor) {
+    // Tensor + torch::Tensor (raw) should work
+    auto t = Tensor<4>(torch::ones({4}) * 3.0f);
+    auto raw = torch::ones({4}) * 2.0f;
+    auto add = t + raw;
+    EXPECT_NEAR(add.t().sum().item<float>(), 20.0f, 1e-5f);  // 4*5
+    auto sub = t - raw;
+    EXPECT_NEAR(sub.t().sum().item<float>(), 4.0f, 1e-5f);   // 4*1
+    auto mul = t * raw;
+    EXPECT_NEAR(mul.t().sum().item<float>(), 24.0f, 1e-5f);  // 4*6
+    auto div = t / raw;
+    EXPECT_NEAR(div.t().sum().item<float>(), 6.0f, 1e-5f);   // 4*1.5
+}
+
+TEST(EdgeCaseTest, TensorScalarOps) {
+    // Tensor + float, Tensor - float
+    auto t = Tensor<4>(torch::ones({4}) * 5.0f);
+    auto add = t + 3.0f;
+    EXPECT_NEAR(add.t().sum().item<float>(), 32.0f, 1e-5f);  // 4*8
+    auto sub = t - 2.0f;
+    EXPECT_NEAR(sub.t().sum().item<float>(), 12.0f, 1e-5f);  // 4*3
+}
