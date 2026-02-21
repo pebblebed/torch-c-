@@ -1389,39 +1389,41 @@ TEST(BatchTensorTest, BroadcastReverseDiv) {
 // ============================================================
 
 TEST(BatchTensorTest, UnbatchMember) {
-    // Tensor<4, 8>::unbatch() → BatchTensor<8> with batch_size=4
-    auto t = Tensor<4, 8>(torch::randn({4, 8}));
+    // Tensor<4, 6>::unbatch() → BatchTensor<6> with batch_size=4
+    auto t = Tensor<4, 6>(torch::randn({4, 6}));
     auto bt = t.unbatch();
     ASSERT_EQ(bt.batch_size(), 4);
-    ASSERT_EQ(bt.t().size(1), 8);
+    ASSERT_EQ(bt.t().size(1), 6);
     // Data should be identical
     EXPECT_TRUE(torch::equal(bt.t(), t.t()));
 }
 
 TEST(BatchTensorTest, UnbatchFreeFunction) {
-    // unbatch(Tensor<4, 8>) → BatchTensor<8>
-    auto t = Tensor<4, 8>(torch::randn({4, 8}));
+    // unbatch(Tensor<4, 6>) → BatchTensor<6>
+    auto t = Tensor<4, 6>(torch::randn({4, 6}));
     auto bt = unbatch(t);
     ASSERT_EQ(bt.batch_size(), 4);
-    ASSERT_EQ(bt.t().size(1), 8);
+    ASSERT_EQ(bt.t().size(1), 6);
     EXPECT_TRUE(torch::equal(bt.t(), t.t()));
 }
 
 TEST(BatchTensorTest, UnbatchBindRoundtrip) {
-    // Tensor<4, 8> → unbatch → BatchTensor<8> → bind<4> → Tensor<4, 8>
-    auto t = Tensor<4, 8>(torch::randn({4, 8}));
-    auto bt = t.unbatch();
-    auto t2 = bt.bind<4>();
-    EXPECT_TRUE(torch::equal(t.t(), t2.t()));
+    // BatchTensor<6> → bind<4> → Tensor<4, 6> → unbatch → BatchTensor<6>
+    auto raw = torch::randn({4, 6});
+    BatchTensor<6> bt(raw);
+    auto t = bt.bind<4>();
+    auto bt2 = t.unbatch();
+    ASSERT_EQ(bt2.batch_size(), 4);
+    EXPECT_TRUE(torch::equal(bt2.t(), bt.t()));
 }
 
 TEST(BatchTensorTest, Unbatch3D) {
-    // Tensor<3, 4, 5>::unbatch() → BatchTensor<4, 5> with batch_size=3
-    auto t = Tensor<3, 4, 5>(torch::randn({3, 4, 5}));
+    // Tensor<2, 3, 4>::unbatch() → BatchTensor<3, 4> with batch_size=2
+    auto t = Tensor<2, 3, 4>(torch::randn({2, 3, 4}));
     auto bt = t.unbatch();
-    ASSERT_EQ(bt.batch_size(), 3);
-    ASSERT_EQ(bt.t().size(1), 4);
-    ASSERT_EQ(bt.t().size(2), 5);
+    ASSERT_EQ(bt.batch_size(), 2);
+    ASSERT_EQ(bt.t().size(1), 3);
+    ASSERT_EQ(bt.t().size(2), 4);
     EXPECT_TRUE(torch::equal(bt.t(), t.t()));
 }
 
