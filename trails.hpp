@@ -464,8 +464,8 @@ struct BatchTensor {
     constexpr static size_t math_dim() { return sizeof...(Dims); }
 
     // Construct from a dynamic torch::Tensor.
-    // Validates that t.sizes()[1:] == {Dims...} and stores batch_size = t.size(0).
-    BatchTensor(torch::Tensor t) : t_(t), batch_size_(t.size(0)) {
+    // Validates that t.sizes()[1:] == {Dims...}; batch size is t.size(0).
+    BatchTensor(torch::Tensor t) : t_(t) {
         constexpr int ndim = sizeof...(Dims);
         if (t.dim() != ndim + 1) {
             throw std::runtime_error(
@@ -479,17 +479,17 @@ struct BatchTensor {
         }
     }
 
-    int64_t batch_size() const { return batch_size_; }
+    int64_t batch_size() const { return t_.size(0); }
     torch::Tensor t() const { return t_; }
     torch::Tensor data() const { return t_; }
 
-    // Promote to static tensor — runtime checks batch_size_ == B
+    // Promote to static tensor — runtime checks batch_size() == B
     template<int B>
     Tensor<B, Dims...> bind() const {
-        if (batch_size_ != B) {
+        if (batch_size() != B) {
             throw std::runtime_error(
                 "BatchTensor::bind: expected batch_size " + std::to_string(B) +
-                " but got " + std::to_string(batch_size_));
+                " but got " + std::to_string(batch_size()));
         }
         return Tensor<B, Dims...>(t_);
     }
@@ -504,7 +504,7 @@ struct BatchTensor {
     BatchTensor<NewDims...> reshape() const {
         static_assert((static_cast<int64_t>(Dims) * ...) == (static_cast<int64_t>(NewDims) * ...),
             "BatchTensor::reshape: number of elements must match");
-        return BatchTensor<NewDims...>{ t_.reshape({batch_size_, NewDims...}) };
+        return BatchTensor<NewDims...>{ t_.reshape({batch_size(), NewDims...}) };
     }
 
     // Activations — element-wise, shape-preserving
@@ -552,13 +552,12 @@ struct BatchTensor {
     }
 
     friend std::ostream& operator<<(std::ostream& os, const BatchTensor& bt) {
-        os << "BatchTensor[B=" << bt.batch_size_ << "] " << bt.t_;
+        os << "BatchTensor[B=" << bt.batch_size() << "] " << bt.t_;
         return os;
     }
 
 private:
     torch::Tensor t_;
-    int64_t batch_size_;
 };
 
 // Free function unbatch: Tensor<B, Dims...> → BatchTensor<Dims...>
