@@ -1480,6 +1480,104 @@ TEST(BatchTensorTest, FunctionalAvgPool2d) {
     EXPECT_NEAR(out.t().mean().item<float>(), 2.0f, 1e-5f);
 }
 
+// ============================================================
+// BatchTensor functional ops via F:: namespace
+// ============================================================
+
+TEST(BatchFunctionalTest, Relu) {
+    auto input = BatchTensor<8>(torch::randn({5, 8}));
+    auto out = F::relu(input);
+    ASSERT_EQ(out.batch_size(), 5);
+    ASSERT_EQ(out.t().size(1), 8);
+    EXPECT_TRUE((out.t() >= 0).all().item<bool>());
+    // Verify matches method version
+    auto method_out = input.relu();
+    EXPECT_TRUE(torch::equal(out.t(), method_out.t()));
+}
+
+TEST(BatchFunctionalTest, Gelu) {
+    auto input = BatchTensor<8>(torch::randn({5, 8}));
+    auto out = F::gelu(input);
+    ASSERT_EQ(out.batch_size(), 5);
+    ASSERT_EQ(out.t().size(1), 8);
+    // GELU(0) ≈ 0
+    auto zeros_in = BatchTensor<4>(torch::zeros({3, 4}));
+    auto gz = F::gelu(zeros_in);
+    EXPECT_NEAR(gz.t().sum().item<float>(), 0.0f, 1e-5f);
+    // Verify matches method version
+    auto method_out = input.gelu();
+    EXPECT_TRUE(torch::equal(out.t(), method_out.t()));
+}
+
+TEST(BatchFunctionalTest, Sigmoid) {
+    auto input = BatchTensor<8>(torch::randn({5, 8}));
+    auto out = F::sigmoid(input);
+    ASSERT_EQ(out.batch_size(), 5);
+    ASSERT_EQ(out.t().size(1), 8);
+    EXPECT_TRUE((out.t() > 0).all().item<bool>());
+    EXPECT_TRUE((out.t() < 1).all().item<bool>());
+    // sigmoid(0) = 0.5
+    auto zeros_in = BatchTensor<4>(torch::zeros({3, 4}));
+    auto sz = F::sigmoid(zeros_in);
+    EXPECT_NEAR(sz.t().mean().item<float>(), 0.5f, 1e-5f);
+    // Verify matches method version
+    auto method_out = input.sigmoid();
+    EXPECT_TRUE(torch::equal(out.t(), method_out.t()));
+}
+
+TEST(BatchFunctionalTest, Tanh) {
+    auto input = BatchTensor<8>(torch::randn({5, 8}));
+    auto out = F::tanh(input);
+    ASSERT_EQ(out.batch_size(), 5);
+    ASSERT_EQ(out.t().size(1), 8);
+    EXPECT_TRUE((out.t() > -1).all().item<bool>());
+    EXPECT_TRUE((out.t() < 1).all().item<bool>());
+    // tanh(0) = 0
+    auto zeros_in = BatchTensor<4>(torch::zeros({3, 4}));
+    auto tz = F::tanh(zeros_in);
+    EXPECT_NEAR(tz.t().sum().item<float>(), 0.0f, 1e-5f);
+    // Verify matches method version
+    auto method_out = input.tanh();
+    EXPECT_TRUE(torch::equal(out.t(), method_out.t()));
+}
+
+TEST(BatchFunctionalTest, Softmax) {
+    auto input = BatchTensor<10>(torch::randn({5, 10}));
+    auto out = F::softmax<0>(input);
+    ASSERT_EQ(out.batch_size(), 5);
+    ASSERT_EQ(out.t().size(1), 10);
+    // Each row should sum to 1
+    auto sums = out.t().sum(1);
+    for (int i = 0; i < 5; i++) {
+        EXPECT_NEAR(sums[i].item<float>(), 1.0f, 1e-5f);
+    }
+    // Verify matches method version
+    auto method_out = input.softmax<0>();
+    EXPECT_TRUE(torch::allclose(out.t(), method_out.t()));
+}
+
+TEST(BatchFunctionalTest, Dropout) {
+    auto input = BatchTensor<8>(torch::randn({5, 8}));
+    // training=false → identity
+    auto out = F::dropout(input, 0.5, false);
+    ASSERT_EQ(out.batch_size(), 5);
+    ASSERT_EQ(out.t().size(1), 8);
+    EXPECT_TRUE(torch::allclose(out.t(), input.t()));
+    // p=0.0, training=true → identity
+    auto out0 = F::dropout(input, 0.0, true);
+    EXPECT_TRUE(torch::allclose(out0.t(), input.t()));
+}
+
+TEST(BatchFunctionalTest, DropoutHighDim) {
+    // Also test with higher-dimensional BatchTensor
+    auto input = BatchTensor<3, 4>(torch::randn({5, 3, 4}));
+    auto out = F::dropout(input, 0.5, false);
+    ASSERT_EQ(out.batch_size(), 5);
+    ASSERT_EQ(out.t().size(1), 3);
+    ASSERT_EQ(out.t().size(2), 4);
+    EXPECT_TRUE(torch::allclose(out.t(), input.t()));
+}
+
 TEST(BatchTensorTest, CrossEntropyDynamicBatch) {
     // BatchTensor<10> logits + torch::Tensor labels → scalar
     auto logits = BatchTensor<10>(torch::randn({5, 10}));
@@ -1914,4 +2012,52 @@ TEST(EdgeCaseTest, TensorScalarOps) {
     EXPECT_NEAR(add.t().sum().item<float>(), 32.0f, 1e-5f);  // 4*8
     auto sub = t - 2.0f;
     EXPECT_NEAR(sub.t().sum().item<float>(), 12.0f, 1e-5f);  // 4*3
+}
+
+
+// ============================================================
+// Error handling tests
+// ============================================================
+
+TEST(ErrorHandlingTest, TensorConstructorSizeMismatch) {
+    // Tensor<2,3> constructed from a [2,4] tensor should throw
+    auto wrong_cols = torch::randn({2, 4});
+    EXPECT_THROW((Tensor<2, 3>(wrong_cols)), std::runtime_error);
+
+    // Wrong number of dimensions
+    auto wrong_ndim = torch::randn({2, 3, 1});
+    EXPECT_THROW((Tensor<2, 3>(wrong_ndim)), std::runtime_error);
+
+    // Scalar Tensor<> from non-scalar
+    auto non_scalar = torch::randn({1});
+    EXPECT_THROW((Tensor<>(non_scalar)), std::runtime_error);
+}
+
+TEST(ErrorHandlingTest, BatchTensorBindMismatch) {
+    // bind<N> where N != batch_size should throw
+    auto raw = torch::randn({4, 6});
+    BatchTensor<6> bt(raw);
+    EXPECT_THROW(bt.bind<5>(), std::runtime_error);
+    EXPECT_THROW(bt.bind<3>(), std::runtime_error);
+    EXPECT_THROW(bt.bind<0>(), std::runtime_error);
+    // Correct bind should not throw
+    EXPECT_NO_THROW(bt.bind<4>());
+}
+
+TEST(ErrorHandlingTest, BatchTensorConstructorWrongDims) {
+    // BatchTensor<8> needs 2D: [B, 8]. A 1D tensor should throw
+    EXPECT_THROW((BatchTensor<8>(torch::randn({8}))), std::runtime_error);
+    // 3D tensor should throw for 1-math-dim BatchTensor
+    EXPECT_THROW((BatchTensor<8>(torch::randn({2, 8, 3}))), std::runtime_error);
+    // Wrong math dim size should throw
+    EXPECT_THROW((BatchTensor<8>(torch::randn({2, 7}))), std::runtime_error);
+}
+
+TEST(ErrorHandlingTest, ArangeNonZeroStart) {
+    // arange(start>0) generates fewer than numel() elements,
+    // causing view to fail — this is a known API limitation.
+    EXPECT_THROW((Tensor<6>::arange(2)), std::runtime_error);
+    EXPECT_THROW((Tensor<2, 3>::arange(1)), std::runtime_error);
+    // start=0 should work fine
+    EXPECT_NO_THROW((Tensor<6>::arange(0)));
 }
