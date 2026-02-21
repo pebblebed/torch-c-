@@ -2056,8 +2056,9 @@ TEST(ErrorHandlingTest, BatchTensorConstructorWrongDims) {
 TEST(ErrorHandlingTest, ArangeNonZeroStart) {
     // arange(start>0) generates fewer than numel() elements,
     // causing view to fail — this is a known API limitation.
-    EXPECT_THROW((Tensor<6>::arange(2)), std::runtime_error);
-    EXPECT_THROW((Tensor<2, 3>::arange(1)), std::runtime_error);
+    // PyTorch throws c10::Error (not std::runtime_error) from view().
+    EXPECT_ANY_THROW((Tensor<6>::arange(2)));
+    EXPECT_ANY_THROW((Tensor<2, 3>::arange(1)));
     // start=0 should work fine
     EXPECT_NO_THROW((Tensor<6>::arange(0)));
 }
