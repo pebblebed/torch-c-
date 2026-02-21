@@ -238,7 +238,10 @@ struct Tensor {
     constexpr static size_t dim() { return seq_t::length; }
     constexpr static auto shape = seq_t::values;
     constexpr static size_t _numel(std::convertible_to<int> auto... dims) { return (... * static_cast<size_t>(dims)); }
-    constexpr static size_t numel() { return _numel(Dims...); }
+    constexpr static size_t numel() {
+        if constexpr (sizeof...(Dims) == 0) return 0;
+        else return _numel(Dims...);
+    }
     template<size_t i>
     constexpr static size_t size = std::get<i>(shape);
     constexpr static decltype(shape) sizes() { return shape; }

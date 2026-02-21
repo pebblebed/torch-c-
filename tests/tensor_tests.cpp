@@ -1652,7 +1652,7 @@ TEST(EdgeCaseTest, Numel) {
     EXPECT_EQ((Tensor<3, 4>::numel()), 12u);
     EXPECT_EQ((Tensor<2, 3, 5>::numel()), 30u);
     EXPECT_EQ((Tensor<1>::numel()), 1u);
-    // Note: Tensor<>::numel() doesn't compile (empty fold expression) — by design
+    EXPECT_EQ((Tensor<>::numel()), 0u);  // scalar: no dimensions → 0
 }
 
 TEST(EdgeCaseTest, ScalarAlias) {
