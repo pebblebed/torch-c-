@@ -121,20 +121,20 @@ TEST(CharformerTests, MultiHeadAttention) {
 TEST(CharformerTests, FeedForwardShape) {
     torch::NoGradGuard no_grad;
     constexpr int B = 2, SeqLen = 8, ModelDim = 32, FFDim = 64;
-    FeedForward<B, SeqLen, ModelDim, FFDim> ff;
-    auto x = trails::Tensor<B, SeqLen, ModelDim>::randn();
+    FeedForward<SeqLen, ModelDim, FFDim> ff;
+    auto x = trails::BatchTensor<SeqLen, ModelDim>(torch::randn({B, SeqLen, ModelDim}));
     auto y = ff.forward(x);
-    EXPECT_EQ(y.dim(), 3);
-    EXPECT_EQ(y.size<0>, B);
-    EXPECT_EQ(y.size<1>, SeqLen);
-    EXPECT_EQ(y.size<2>, ModelDim);
+    EXPECT_EQ(y.t().dim(), 3);
+    EXPECT_EQ(y.batch_size(), B);
+    EXPECT_EQ(y.t().size(1), SeqLen);
+    EXPECT_EQ(y.t().size(2), ModelDim);
 }
 
 TEST(CharformerTests, FeedForwardOutputFinite) {
     torch::NoGradGuard no_grad;
     constexpr int B = 2, SeqLen = 8, ModelDim = 32, FFDim = 64;
-    FeedForward<B, SeqLen, ModelDim, FFDim> ff;
-    auto x = trails::Tensor<B, SeqLen, ModelDim>::randn();
+    FeedForward<SeqLen, ModelDim, FFDim> ff;
+    auto x = trails::BatchTensor<SeqLen, ModelDim>(torch::randn({B, SeqLen, ModelDim}));
     auto y = ff.forward(x);
     // Output should be finite (no NaN or Inf)
     EXPECT_TRUE(torch::all(torch::isfinite(y.t())).item<bool>());
@@ -150,20 +150,20 @@ TEST(CharformerTests, FeedForwardOutputFinite) {
 TEST(CharformerTests, TransformerEncoderLayerShape) {
     torch::NoGradGuard no_grad;
     constexpr int B = 2, SeqLen = 8, NumHeads = 2, ModelDim = 32, FFDim = 64;
-    TransformerEncoderLayer<B, SeqLen, NumHeads, ModelDim, FFDim> layer;
-    auto x = trails::Tensor<B, SeqLen, ModelDim>::randn();
+    TransformerEncoderLayer<SeqLen, NumHeads, ModelDim, FFDim> layer;
+    auto x = trails::BatchTensor<SeqLen, ModelDim>(torch::randn({B, SeqLen, ModelDim}));
     auto y = layer.forward(x);
-    EXPECT_EQ(y.dim(), 3);
-    EXPECT_EQ(y.size<0>, B);
-    EXPECT_EQ(y.size<1>, SeqLen);
-    EXPECT_EQ(y.size<2>, ModelDim);
+    EXPECT_EQ(y.t().dim(), 3);
+    EXPECT_EQ(y.batch_size(), B);
+    EXPECT_EQ(y.t().size(1), SeqLen);
+    EXPECT_EQ(y.t().size(2), ModelDim);
 }
 
 TEST(CharformerTests, TransformerEncoderLayerOutputFinite) {
     torch::NoGradGuard no_grad;
     constexpr int B = 2, SeqLen = 8, NumHeads = 2, ModelDim = 32, FFDim = 64;
-    TransformerEncoderLayer<B, SeqLen, NumHeads, ModelDim, FFDim> layer;
-    auto x = trails::Tensor<B, SeqLen, ModelDim>::randn();
+    TransformerEncoderLayer<SeqLen, NumHeads, ModelDim, FFDim> layer;
+    auto x = trails::BatchTensor<SeqLen, ModelDim>(torch::randn({B, SeqLen, ModelDim}));
     auto y = layer.forward(x);
     // Output should be finite (no NaN or Inf)
     EXPECT_TRUE(torch::all(torch::isfinite(y.t())).item<bool>());
@@ -217,3 +217,77 @@ TEST(CharformerTests, CharFormerStringForward) {
     // All values should be <= 0 (log probabilities)
     EXPECT_TRUE(torch::all(y.t() <= 0.0f).item<bool>());
 }
+
+// ============================================================
+// Wave 3, Task 6: Batch-agnostic CharFormer module tests
+// TODO: uncomment after Task 5 completes (BatchTensor-ize charformer.hpp)
+// These tests require FeedForward, TransformerEncoderLayer, and CharFormer
+// to accept BatchTensor inputs without a compile-time B parameter.
+// ============================================================
+
+#if 0  // Enable after Task 5 lands batch-agnostic charformer modules
+
+TEST(CharformerBatchTests, FeedForward_Batch) {
+    torch::NoGradGuard no_grad;
+    // FeedForward<SeqLen=8, ModelDim=32, FFDim=64> (no B!)
+    // Forward with BatchTensor<8, 32> batch_size=3
+    FeedForward<8, 32, 64> ff;
+    auto input = trails::BatchTensor<8, 32>(torch::randn({3, 8, 32}));
+    auto output = ff.forward(input);
+    ASSERT_EQ(output.batch_size(), 3);
+    ASSERT_EQ(output.t().size(1), 8);
+    ASSERT_EQ(output.t().size(2), 32);
+    // Output should be finite
+    EXPECT_TRUE(torch::all(torch::isfinite(output.t())).item<bool>());
+}
+
+TEST(CharformerBatchTests, TransformerEncoderLayer_Batch) {
+    torch::NoGradGuard no_grad;
+    // TransformerEncoderLayer<SeqLen=8, NumHeads=2, ModelDim=32, FFDim=64> (no B!)
+    TransformerEncoderLayer<8, 2, 32, 64> layer;
+    auto input = trails::BatchTensor<8, 32>(torch::randn({3, 8, 32}));
+    auto output = layer.forward(input);
+    ASSERT_EQ(output.batch_size(), 3);
+    ASSERT_EQ(output.t().size(1), 8);
+    ASSERT_EQ(output.t().size(2), 32);
+    // Output should be finite
+    EXPECT_TRUE(torch::all(torch::isfinite(output.t())).item<bool>());
+}
+
+TEST(CharformerBatchTests, CharFormer_BatchDynamic) {
+    torch::NoGradGuard no_grad;
+    // CharFormer<SeqLen=8, VocabSize=256, ModelDim=32, NumHeads=2, FFDim=64, NLayers=2> (no B!)
+    // KEY BENEFIT: same model, different batch sizes at runtime
+    CharFormer<8, 256, 32, 2, 64, 2> model;
+
+    // Forward with batch_size=1
+    auto input1 = trails::BatchTensor<8>(torch::randint(0, 256, {1, 8}, torch::kLong));
+    auto output1 = model.forward(input1);
+    ASSERT_EQ(output1.batch_size(), 1);
+    ASSERT_EQ(output1.t().size(1), 8);
+    ASSERT_EQ(output1.t().size(2), 256);
+    // Output should be finite
+    EXPECT_TRUE(torch::all(torch::isfinite(output1.t())).item<bool>());
+    // All values should be <= 0 (log probabilities)
+    EXPECT_TRUE(torch::all(output1.t() <= 0.0f).item<bool>());
+    // exp along last dim should sum to ~1
+    auto probs1 = output1.t().exp().sum(-1);
+    EXPECT_NEAR(probs1.mean().item<float>(), 1.0f, 1e-4f);
+
+    // Forward with batch_size=4 — same model!
+    auto input4 = trails::BatchTensor<8>(torch::randint(0, 256, {4, 8}, torch::kLong));
+    auto output4 = model.forward(input4);
+    ASSERT_EQ(output4.batch_size(), 4);
+    ASSERT_EQ(output4.t().size(1), 8);
+    ASSERT_EQ(output4.t().size(2), 256);
+    // Output should be finite
+    EXPECT_TRUE(torch::all(torch::isfinite(output4.t())).item<bool>());
+    // All values should be <= 0 (log probabilities)
+    EXPECT_TRUE(torch::all(output4.t() <= 0.0f).item<bool>());
+    // exp along last dim should sum to ~1
+    auto probs4 = output4.t().exp().sum(-1);
+    auto max_err = (probs4 - 1.0f).abs().max().item<float>();
+    EXPECT_LT(max_err, 1e-4f);
+}
+
+#endif  // Task 5 batch-agnostic charformer modules

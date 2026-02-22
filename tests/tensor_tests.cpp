@@ -2042,3 +2042,91 @@ TEST(ErrorHandlingTest, ArangeNonZeroStart) {
     // start=0 should work fine
     EXPECT_NO_THROW((Tensor<6>::arange(0)));
 }
+
+// ============================================================
+// Wave 3, Task 6: Batch-agnostic transformer module tests
+// ============================================================
+
+TEST(BatchAgnosticTest, BatchMultiHeadAttention_Shape) {
+    torch::NoGradGuard no_grad;
+    // MultiHeadAttention<NumHeads=2, ModelDim=32>, forward<SeqLen=8>
+    trails::nn::MultiHeadAttention<2, 32> mha;
+    auto input = BatchTensor<8, 32>(torch::randn({4, 8, 32}));
+    auto output = mha.forward<8>(input);
+    // Output shape should be (4, 8, 32) — same as input
+    ASSERT_EQ(output.batch_size(), 4);
+    ASSERT_EQ(output.t().size(1), 8);
+    ASSERT_EQ(output.t().size(2), 32);
+}
+
+TEST(BatchAgnosticTest, BatchMultiHeadAttention_DifferentBatchSizes) {
+    torch::NoGradGuard no_grad;
+    // KEY BENEFIT: same model instance, different batch sizes at forward time
+    trails::nn::MultiHeadAttention<2, 32> mha;
+
+    // Forward with batch_size=1
+    auto input1 = BatchTensor<8, 32>(torch::randn({1, 8, 32}));
+    auto output1 = mha.forward<8>(input1);
+    ASSERT_EQ(output1.batch_size(), 1);
+    ASSERT_EQ(output1.t().size(1), 8);
+    ASSERT_EQ(output1.t().size(2), 32);
+
+    // Forward with batch_size=8 — same model!
+    auto input8 = BatchTensor<8, 32>(torch::randn({8, 8, 32}));
+    auto output8 = mha.forward<8>(input8);
+    ASSERT_EQ(output8.batch_size(), 8);
+    ASSERT_EQ(output8.t().size(1), 8);
+    ASSERT_EQ(output8.t().size(2), 32);
+}
+
+TEST(BatchAgnosticTest, BatchMultiHeadAttention_OutputFinite) {
+    torch::NoGradGuard no_grad;
+    trails::nn::MultiHeadAttention<2, 32> mha;
+    auto input = BatchTensor<8, 32>(torch::randn({4, 8, 32}));
+    auto output = mha.forward<8>(input);
+    // Output should be finite (no NaN or Inf)
+    EXPECT_TRUE(torch::all(torch::isfinite(output.t())).item<bool>());
+}
+
+TEST(BatchAgnosticTest, BatchLayerNorm_Shape) {
+    torch::NoGradGuard no_grad;
+    // BatchLayerNorm<8, 32> normalizes over dims (8, 32)
+    trails::nn::BatchLayerNorm<8, 32> ln;
+    auto input = BatchTensor<8, 32>(torch::randn({4, 8, 32}));
+    auto output = ln.forward(input);
+    // Output shape should match input
+    ASSERT_EQ(output.batch_size(), 4);
+    ASSERT_EQ(output.t().size(1), 8);
+    ASSERT_EQ(output.t().size(2), 32);
+}
+
+TEST(BatchAgnosticTest, BatchLayerNorm_Normalization) {
+    torch::NoGradGuard no_grad;
+    trails::nn::BatchLayerNorm<8, 32> ln;
+    auto input = BatchTensor<8, 32>(torch::randn({4, 8, 32}));
+    auto output = ln.forward(input);
+
+    // For each sample in the batch, the normalized output should have
+    // mean ≈ 0 and variance ≈ 1 along the normalized dimensions (8, 32)
+    for (int b = 0; b < 4; b++) {
+        auto sample = output.t().index({b});  // shape (8, 32)
+        auto mean = sample.mean().item<float>();
+        auto var = sample.var().item<float>();
+        EXPECT_NEAR(mean, 0.0f, 0.1f);
+        EXPECT_NEAR(var, 1.0f, 0.2f);
+    }
+}
+
+TEST(BatchAgnosticTest, Embedding_BatchForward) {
+    torch::NoGradGuard no_grad;
+    // Embedding<VocabSize=256, EmbedDim=32>, batch-agnostic forward
+    trails::nn::Embedding<256, 32> emb;
+    auto indices = BatchTensor<8>(torch::randint(0, 256, {4, 8}, torch::kLong));
+    auto output = emb.forward<8>(indices);
+    // Output shape should be (4, 8, 32)
+    ASSERT_EQ(output.batch_size(), 4);
+    ASSERT_EQ(output.t().size(1), 8);
+    ASSERT_EQ(output.t().size(2), 32);
+    // Output should be finite
+    EXPECT_TRUE(torch::all(torch::isfinite(output.t())).item<bool>());
+}
