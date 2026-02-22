@@ -10,6 +10,7 @@
 
 using namespace trails;
 namespace F = trails::functional;
+namespace nn = trails::nn;
 
 // ── MNIST constants ─────────────────────────────────────────
 constexpr int kBatchSize = 64;
@@ -53,19 +54,21 @@ constexpr double kMnistStd  = 0.3081;
 // Flatten(kImgH×kImgW→kImgPixels) → Linear(kImgPixels,kFCHidden1) → relu
 // → Linear(kFCHidden1,kFCHidden2) → relu → Linear(kFCHidden2,kNumClasses)
 struct FCModel : torch::nn::Module {
-    torch::nn::Linear fc1{nullptr}, fc2{nullptr}, fc3{nullptr};
+    std::shared_ptr<nn::Linear<kImgPixels, kFCHidden1>> fc1;
+    std::shared_ptr<nn::Linear<kFCHidden1, kFCHidden2>> fc2;
+    std::shared_ptr<nn::Linear<kFCHidden2, kNumClasses>> fc3;
 
     FCModel() {
-        fc1 = register_module("fc1", torch::nn::Linear(kImgPixels, kFCHidden1));
-        fc2 = register_module("fc2", torch::nn::Linear(kFCHidden1, kFCHidden2));
-        fc3 = register_module("fc3", torch::nn::Linear(kFCHidden2, kNumClasses));
+        fc1 = register_module("fc1", std::make_shared<nn::Linear<kImgPixels, kFCHidden1>>());
+        fc2 = register_module("fc2", std::make_shared<nn::Linear<kFCHidden1, kFCHidden2>>());
+        fc3 = register_module("fc3", std::make_shared<nn::Linear<kFCHidden2, kNumClasses>>());
     }
 
     BatchTensor<kNumClasses> forward(BatchTensor<kImgC, kImgH, kImgW> input) {
         auto flat = F::flatten<0, 2>(input);             // BatchTensor<kImgPixels>
-        auto h1 = BatchTensor<kFCHidden1>(fc1->forward(flat.t()));
-        auto h2 = BatchTensor<kFCHidden2>(fc2->forward(h1.relu().t()));
-        return BatchTensor<kNumClasses>(fc3->forward(h2.relu().t()));
+        auto h1 = fc1->forward(flat).relu();
+        auto h2 = fc2->forward(h1).relu();
+        return fc3->forward(h2);
     }
 };
 
@@ -74,27 +77,28 @@ struct FCModel : torch::nn::Module {
 // → Conv2d(kConv1Out→kConv2Out, kKernel×kKernel) → relu → MaxPool2d(kPool,kPool)
 // → Flatten(kConv2Out×kPool2H×kPool2W=kConvFlat) → Linear(kConvFlat,kNumClasses)
 struct ConvNetModel : torch::nn::Module {
-    torch::nn::Conv2d conv1{nullptr}, conv2{nullptr};
-    torch::nn::Linear fc{nullptr};
+    std::shared_ptr<nn::Conv2d<kImgC, kConv1Out, kKernel, kKernel>> conv1;
+    std::shared_ptr<nn::Conv2d<kConv1Out, kConv2Out, kKernel, kKernel>> conv2;
+    std::shared_ptr<nn::Linear<kConvFlat, kNumClasses>> fc;
 
     ConvNetModel() {
         conv1 = register_module("conv1",
-            torch::nn::Conv2d(torch::nn::Conv2dOptions(kImgC, kConv1Out, kKernel)));
+            std::make_shared<nn::Conv2d<kImgC, kConv1Out, kKernel, kKernel>>());
         conv2 = register_module("conv2",
-            torch::nn::Conv2d(torch::nn::Conv2dOptions(kConv1Out, kConv2Out, kKernel)));
-        fc = register_module("fc", torch::nn::Linear(kConvFlat, kNumClasses));
+            std::make_shared<nn::Conv2d<kConv1Out, kConv2Out, kKernel, kKernel>>());
+        fc = register_module("fc", std::make_shared<nn::Linear<kConvFlat, kNumClasses>>());
     }
 
     BatchTensor<kNumClasses> forward(BatchTensor<kImgC, kImgH, kImgW> input) {
         // Conv1 → relu → pool
-        auto c1 = BatchTensor<kConv1Out, kConv1H, kConv1W>(conv1->forward(input.t()));
-        auto p1 = F::max_pool2d<kPool, kPool, kPool, kPool>(c1.relu());   // → <B,kConv1Out,kPool1H,kPool1W>
+        auto c1 = conv1->forward(input).relu();
+        auto p1 = F::max_pool2d<kPool, kPool, kPool, kPool>(c1);   // → <B,kConv1Out,kPool1H,kPool1W>
         // Conv2 → relu → pool
-        auto c2 = BatchTensor<kConv2Out, kConv2H, kConv2W>(conv2->forward(p1.t()));
-        auto p2 = F::max_pool2d<kPool, kPool, kPool, kPool>(c2.relu());   // → <B,kConv2Out,kPool2H,kPool2W>
+        auto c2 = conv2->forward(p1).relu();
+        auto p2 = F::max_pool2d<kPool, kPool, kPool, kPool>(c2);   // → <B,kConv2Out,kPool2H,kPool2W>
         // Flatten → FC
         auto flat = F::flatten<0, 2>(p2);                     // BatchTensor<kConvFlat>
-        return BatchTensor<kNumClasses>(fc->forward(flat.t()));
+        return fc->forward(flat);
     }
 };
 
