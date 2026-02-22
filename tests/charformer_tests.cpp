@@ -176,16 +176,16 @@ TEST(CharformerTests, TransformerEncoderLayerOutputFinite) {
 TEST(CharformerTests, CharFormerForward) {
     torch::NoGradGuard no_grad;
     constexpr int B = 2, SeqLen = 8, VocabSize = 256, ModelDim = 32, NumHeads = 2, FFDim = 64, NLayers = 2;
-    CharFormer<B, SeqLen, VocabSize, ModelDim, NumHeads, FFDim, NLayers> model;
+    CharFormer<SeqLen, VocabSize, ModelDim, NumHeads, FFDim, NLayers> model;
     // Input: random long indices in [0, VocabSize)
-    auto x = trails::Tensor<B, SeqLen>(torch::randint(0, VocabSize, {B, SeqLen}, torch::kLong));
+    auto x = trails::BatchTensor<SeqLen>(torch::randint(0, VocabSize, {B, SeqLen}, torch::kLong));
     auto y = model.forward(x);
 
     // Check output shape: (B, SeqLen, VocabSize)
-    EXPECT_EQ(y.dim(), 3);
-    EXPECT_EQ(y.size<0>, B);
-    EXPECT_EQ(y.size<1>, SeqLen);
-    EXPECT_EQ(y.size<2>, VocabSize);
+    EXPECT_EQ(y.t().dim(), 3);
+    EXPECT_EQ(y.batch_size(), B);
+    EXPECT_EQ(y.t().size(1), SeqLen);
+    EXPECT_EQ(y.t().size(2), VocabSize);
 
     // Output should be finite
     EXPECT_TRUE(torch::all(torch::isfinite(y.t())).item<bool>());
@@ -201,15 +201,15 @@ TEST(CharformerTests, CharFormerForward) {
 
 TEST(CharformerTests, CharFormerStringForward) {
     torch::NoGradGuard no_grad;
-    constexpr int B = 2, SeqLen = 8, VocabSize = 256, ModelDim = 32, NumHeads = 2, FFDim = 64, NLayers = 2;
-    CharFormer<B, SeqLen, VocabSize, ModelDim, NumHeads, FFDim, NLayers> model;
+    constexpr int SeqLen = 8, VocabSize = 256, ModelDim = 32, NumHeads = 2, FFDim = 64, NLayers = 2;
+    CharFormer<SeqLen, VocabSize, ModelDim, NumHeads, FFDim, NLayers> model;
     auto y = model.forward("test");
 
-    // Check output shape: (B, SeqLen, VocabSize)
-    EXPECT_EQ(y.dim(), 3);
-    EXPECT_EQ(y.size<0>, B);
-    EXPECT_EQ(y.size<1>, SeqLen);
-    EXPECT_EQ(y.size<2>, VocabSize);
+    // Check output shape: (1, SeqLen, VocabSize) — single-element batch
+    EXPECT_EQ(y.t().dim(), 3);
+    EXPECT_EQ(y.batch_size(), 1);
+    EXPECT_EQ(y.t().size(1), SeqLen);
+    EXPECT_EQ(y.t().size(2), VocabSize);
 
     // Output should be finite
     EXPECT_TRUE(torch::all(torch::isfinite(y.t())).item<bool>());
@@ -224,8 +224,6 @@ TEST(CharformerTests, CharFormerStringForward) {
 // These tests require FeedForward, TransformerEncoderLayer, and CharFormer
 // to accept BatchTensor inputs without a compile-time B parameter.
 // ============================================================
-
-#if 0  // Enable after Task 5 lands batch-agnostic charformer modules
 
 TEST(CharformerBatchTests, FeedForward_Batch) {
     torch::NoGradGuard no_grad;
@@ -290,4 +288,3 @@ TEST(CharformerBatchTests, CharFormer_BatchDynamic) {
     EXPECT_LT(max_err, 1e-4f);
 }
 
-#endif  // Task 5 batch-agnostic charformer modules
