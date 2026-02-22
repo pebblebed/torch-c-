@@ -204,6 +204,34 @@ public:
 };
 
 /*
+ * BatchLayerNorm: batch-agnostic multi-dim LayerNorm.
+ * BatchTensor<Dims...> → BatchTensor<Dims...>.
+ * Normalizes over all mathematical dimensions (the trailing dims after batch).
+ * Uses torch::nn::LayerNorm({Dims...}) internally.
+ *
+ * This is a separate class from LayerNorm to avoid arity ambiguity with
+ * the static-batch LayerNorm<B, FirstDim, RestDims...>.
+ */
+template<int ...Dims>
+class BatchLayerNorm : public torch::nn::Module {
+    torch::nn::LayerNorm inner_;
+public:
+    BatchLayerNorm()
+    : inner_(torch::nn::LayerNorm(torch::nn::LayerNormOptions({Dims...})))
+    {
+        register_module("layer_norm", inner_);
+    }
+
+    BatchTensor<Dims...> forward(BatchTensor<Dims...> input) {
+        return BatchTensor<Dims...>(inner_->forward(input.t()));
+    }
+
+    std::vector<torch::Tensor> parameters() const {
+        return torch::nn::Module::parameters();
+    }
+};
+
+/*
  * BatchNorm1d: wraps torch::nn::BatchNorm1d.
  * Input/output shape: Tensor<B, C, L>
  */
@@ -250,7 +278,18 @@ public:
     Tensor<B, SeqLen, EmbedDim> forward(Tensor<B, SeqLen> input) {
         return { emb->forward(input.t()) };
     }
+
+    // Batch-agnostic forward: BatchTensor<SeqLen> → BatchTensor<SeqLen, EmbedDim>
+    template<int SeqLen>
+    BatchTensor<SeqLen, EmbedDim> forward(BatchTensor<SeqLen> input) {
+        return BatchTensor<SeqLen, EmbedDim>(emb->forward(input.t()));
+    }
 };
+
+// Primary variadic template — specializations below for static-batch (4 params)
+// and batch-agnostic (2 params).
+template<int ...Dims>
+class MultiHeadAttention;
 
 /*
  * MultiHeadAttention: compile-time shape-checked multi-head attention.
@@ -267,7 +306,7 @@ public:
  * then projects output back to ModelDim.
  */
 template<int B, int SeqLen, int NumHeads, int ModelDim>
-class MultiHeadAttention : public Module<Tensor<B, SeqLen, ModelDim>, Tensor<B, SeqLen, ModelDim>> {
+class MultiHeadAttention<B, SeqLen, NumHeads, ModelDim> : public Module<Tensor<B, SeqLen, ModelDim>, Tensor<B, SeqLen, ModelDim>> {
     static_assert(ModelDim % NumHeads == 0,
         "MultiHeadAttention: ModelDim must be divisible by NumHeads");
     static constexpr int HeadDim = ModelDim / NumHeads;
@@ -315,6 +354,64 @@ public:
 
         // Output projection
         return InputType(Wo->forward(concat));
+    }
+};
+
+/*
+ * Batch-agnostic MultiHeadAttention: BatchTensor<SeqLen, ModelDim> → BatchTensor<SeqLen, ModelDim>.
+ * Works with any batch size at runtime. Forward is templated on SeqLen.
+ * Template params:
+ *   NumHeads - number of attention heads
+ *   ModelDim - model dimension (must be divisible by NumHeads)
+ */
+template<int NumHeads, int ModelDim>
+class MultiHeadAttention<NumHeads, ModelDim> : public torch::nn::Module {
+    static_assert(ModelDim % NumHeads == 0,
+        "MultiHeadAttention: ModelDim must be divisible by NumHeads");
+    static constexpr int HeadDim = ModelDim / NumHeads;
+
+    torch::nn::Linear Wq, Wk, Wv, Wo;
+
+public:
+    MultiHeadAttention()
+    : Wq(torch::nn::Linear(torch::nn::LinearOptions(ModelDim, ModelDim)))
+    , Wk(torch::nn::Linear(torch::nn::LinearOptions(ModelDim, ModelDim)))
+    , Wv(torch::nn::Linear(torch::nn::LinearOptions(ModelDim, ModelDim)))
+    , Wo(torch::nn::Linear(torch::nn::LinearOptions(ModelDim, ModelDim)))
+    {
+        register_module("Wq", Wq);
+        register_module("Wk", Wk);
+        register_module("Wv", Wv);
+        register_module("Wo", Wo);
+    }
+
+    template<int SeqLen>
+    BatchTensor<SeqLen, ModelDim> forward(BatchTensor<SeqLen, ModelDim> input) {
+        auto x = input.t();  // (batch_size, SeqLen, ModelDim)
+        auto batch_size = input.batch_size();
+
+        // Project Q, K, V: each (batch_size, SeqLen, ModelDim)
+        auto q = Wq->forward(x).reshape({batch_size, SeqLen, NumHeads, HeadDim}).transpose(1, 2);
+        auto k = Wk->forward(x).reshape({batch_size, SeqLen, NumHeads, HeadDim}).transpose(1, 2);
+        auto v = Wv->forward(x).reshape({batch_size, SeqLen, NumHeads, HeadDim}).transpose(1, 2);
+        // q, k, v are now (batch_size, NumHeads, SeqLen, HeadDim)
+
+        // Scaled dot-product attention on untyped tensors (runtime batch dim)
+        const float scale = 1.0f / std::sqrt(static_cast<float>(HeadDim));
+        auto scores = torch::matmul(q, k.transpose(-2, -1)) * scale;
+        auto weights = torch::softmax(scores, /*dim=*/-1);
+        auto attn_out = torch::matmul(weights, v);
+        // attn_out: (batch_size, NumHeads, SeqLen, HeadDim)
+
+        // Reshape back: (batch_size, SeqLen, ModelDim)
+        auto concat = attn_out.transpose(1, 2).contiguous().reshape({batch_size, SeqLen, ModelDim});
+
+        // Output projection
+        return BatchTensor<SeqLen, ModelDim>(Wo->forward(concat));
+    }
+
+    std::vector<torch::Tensor> parameters() const {
+        return torch::nn::Module::parameters();
     }
 };
 
