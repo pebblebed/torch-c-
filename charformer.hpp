@@ -1,5 +1,7 @@
 #pragma once
+#include <array>
 #include <cassert>
+#include <string>
 #include <torch/torch.h>
 #include "trails.hpp"
 #include "trails_nn.hpp"
@@ -68,97 +70,68 @@ public:
 };
 
 /*
- * SelfAttention, ReLU, FeedForward, TransformerEncoderLayer — disabled (old untyped code).
- *
- * To revive these, they need to be rewritten using the typed Trails API:
- *   - SelfAttention: replaced by trails::nn::MultiHeadAttention<B, SeqLen, NumHeads, ModelDim>
- *     which provides compile-time shape-checked multi-head attention.
- *   - ReLU: use trails::functional::relu or Tensor::relu() instead.
- *   - FeedForward: rewrite using trails::nn::Linear and trails::functional::relu
- *     with proper typed tensor dimensions (the old code uses untyped torch::nn modules
- *     and has undefined template parameters B, Dim, OutDim, NLayers).
- *   - TransformerEncoderLayer: rewrite using trails::nn::MultiHeadAttention,
- *     trails::nn::LayerNorm, and typed feedforward layers. The old ResNorm template
- *     args also need updating.
- *   - CharFormer: rewrite using trails::nn::Embedding, typed TransformerEncoderLayer,
- *     and trails::nn::Linear. The old code uses untyped torch::nn modules throughout.
+ * FeedForward: two-layer MLP with ReLU activation.
+ * ModelDim -> FFDim -> ModelDim
  */
-#if 0
-template <
-    int B,
-    int Dim,
-    int NHeads>
-class SelfAttention : public nn::Module {
-    using InputType = trails::Tensor<B, NHeads * Dim>;
-    using WqkvType = trails::Tensor<B, 3 * NHeads * Dim>;
+template<int B, int SeqLen, int ModelDim, int FFDim>
+class FeedForward : public torch::nn::Module {
+    using InputType = Tensor<B, SeqLen, ModelDim>;
 
-    Linear<InputType, WqkvType> Wqkv;
-    nn::MultiheadAttention attn;
+    Tensor<FFDim, ModelDim> w1;
+    Tensor<FFDim> b1;
+    Tensor<ModelDim, FFDim> w2;
+    Tensor<ModelDim> b2;
 
 public:
-    SelfAttention()
-    : Wqkv()
-    , attn(nn::MultiheadAttentionOptions(NHeads * Dim, NHeads)) {}
+    FeedForward()
+    : w1(torch::nn::Module::register_parameter("w1", Tensor<FFDim, ModelDim>::randn().t()))
+    , b1(torch::nn::Module::register_parameter("b1", Tensor<FFDim>::randn().t()))
+    , w2(torch::nn::Module::register_parameter("w2", Tensor<ModelDim, FFDim>::randn().t()))
+    , b2(torch::nn::Module::register_parameter("b2", Tensor<ModelDim>::randn().t()))
+    {}
 
-    InputType forward(InputType x) override {
-        assert(x.dim() == 3); // B, L, H, D
-        assert(x.size(2) == NHeads * Dim);
-        // torch C++ has no batch_first option, so we need to permute
-        auto qkv = Wqkv.forward(x.permute({2, 0, 1}));
-        auto q = qkv.slice(1, 0, Dim);
-        auto k = qkv.slice(1, Dim, 2*Dim);
-        auto v = qkv.slice(1, 2*Dim, 3*Dim);
-        auto pair = attn->forward(q, k, v);
-        return { std::get<0>(pair) };
+    InputType forward(InputType x) {
+        auto h = trails::functional::linear(x, w1, std::optional{b1});
+        h = trails::functional::relu(h);
+        return trails::functional::linear(h, w2, std::optional{b2});
     }
 };
 
-template <typename InputOutput>
-class ReLU : public trails::nn::Module<InputOutput, InputOutput> {
-    using TensorType = InputOutput;
+/*
+ * TransformerEncoderLayer: MHA + residual + LayerNorm, then FF + residual + LayerNorm.
+ * Input/output: Tensor<B, SeqLen, ModelDim>
+ */
+template<int B, int SeqLen, int NumHeads, int ModelDim, int FFDim>
+class TransformerEncoderLayer : public torch::nn::Module {
 public:
-    TensorType forward(TensorType x) override {
-        return { x.t().relu() };
+    using InputType = Tensor<B, SeqLen, ModelDim>;
+
+    std::shared_ptr<trails::nn::MultiHeadAttention<B, SeqLen, NumHeads, ModelDim>> mha;
+    std::shared_ptr<trails::nn::LayerNorm<B, SeqLen, ModelDim>> ln1;
+    std::shared_ptr<FeedForward<B, SeqLen, ModelDim, FFDim>> ff;
+    std::shared_ptr<trails::nn::LayerNorm<B, SeqLen, ModelDim>> ln2;
+
+    TransformerEncoderLayer()
+    : mha(std::make_shared<trails::nn::MultiHeadAttention<B, SeqLen, NumHeads, ModelDim>>())
+    , ln1(std::make_shared<trails::nn::LayerNorm<B, SeqLen, ModelDim>>())
+    , ff(std::make_shared<FeedForward<B, SeqLen, ModelDim, FFDim>>())
+    , ln2(std::make_shared<trails::nn::LayerNorm<B, SeqLen, ModelDim>>())
+    {
+        register_module("mha", mha);
+        register_module("ln1", ln1);
+        register_module("ff", ff);
+        register_module("ln2", ln2);
+    }
+
+    InputType forward(InputType x) {
+        // Self-attention sublayer with residual + LayerNorm
+        auto attn_out = mha->forward(x);
+        auto x1 = ln1->forward(attn_out + x);
+        // Feedforward sublayer with residual + LayerNorm
+        auto ff_out = ff->forward(x1);
+        return ln2->forward(ff_out + x1);
     }
 };
-
-template <
-    typename Activation=nn::ReLU,
-    typename ...Modules>
-class FeedForward : public trails::nn::Module<B, Dim, OutDim> {
-    Modules... modules;
-public:
-    FeedForward() {
-        for (auto i = 0; i < NLayers; i++) {
-            seq->push_back(nn::Linear(Dim, Dim));
-            seq->push_back(Activation());
-        }
-        seq->push_back(nn::Linear(Dim, OutDim));
-        seq->push_back(Activation());
-    }
-
-    torch::Tensor forward(torch::Tensor x) {
-        return seq->forward(x);
-    }
-};
-
-
-template <
-    int B,
-    int Dim,
-    int NHeads,
-    typename Activation=nn::ReLU>
-class TransformerEncoderLayer : public nn::Module {
-    ResNorm<B, Dim, SelfAttention<B, Dim, NHeads>> attn;
-    ResNorm<B, Dim, FeedForward<B, 1, Dim>> ff;
-public:
-    torch::Tensor forward(torch::Tensor x) {
-        auto a = attn->forward(x);
-        auto c = ff->forward(a);
-        return c;
-    }
-};
-#endif
 
 using namespace torch::indexing;
 
@@ -190,57 +163,67 @@ torch::Tensor apply_positional_encoding(torch::Tensor x) {
 }
 
 /*
- * CharFormer — disabled (old untyped code).
- * To revive, rewrite using trails::nn::Embedding, typed TransformerEncoderLayer,
- * and trails::nn::Linear with proper compile-time shape checking.
+ * CharFormer: character-level transformer language model.
+ * Embedding + sinusoidal positional encoding + NLayers encoder layers + linear head + log_softmax.
+ * Input: Tensor<B, SeqLen> of int64 indices -> Output: Tensor<B, SeqLen, VocabSize> log probabilities.
  */
-#if 0
-template <int NEmbeddings, int Dim, int NHeads, int NLayers>
-class CharFormer : public nn::Module {
-    nn::Embedding emb;
-    nn::Sequential seq;
-    nn::Linear head;
-    nn::Softmax probs;
+template<int B, int SeqLen, int VocabSize, int ModelDim, int NumHeads, int FFDim, int NLayers>
+class CharFormer : public torch::nn::Module {
+    using InputType = Tensor<B, SeqLen>;
+    using OutputType = Tensor<B, SeqLen, VocabSize>;
+
+    std::shared_ptr<trails::nn::Embedding<VocabSize, ModelDim>> emb;
+    std::array<std::shared_ptr<TransformerEncoderLayer<B, SeqLen, NumHeads, ModelDim, FFDim>>, NLayers> layers;
+    Tensor<VocabSize, ModelDim> head_w;
+    Tensor<VocabSize> head_b;
+
 public:
     CharFormer()
-    : emb(NEmbeddings, Dim * NHeads)
-    , head(Dim * NHeads, NEmbeddings)
-    , probs(nn::SoftmaxOptions(1))
+    : emb(std::make_shared<trails::nn::Embedding<VocabSize, ModelDim>>())
+    , head_w(torch::nn::Module::register_parameter("head_w", Tensor<VocabSize, ModelDim>::randn().t()))
+    , head_b(torch::nn::Module::register_parameter("head_b", Tensor<VocabSize>::randn().t()))
     {
-        for (auto i = 0; i < NLayers; i++) {
-            seq->push_back(nn::TransformerEncoderLayer(Dim, NHeads));
+        register_module("emb", emb);
+        for (int i = 0; i < NLayers; i++) {
+            layers[i] = std::make_shared<TransformerEncoderLayer<B, SeqLen, NumHeads, ModelDim, FFDim>>();
+            register_module("layer_" + std::to_string(i), layers[i]);
         }
-        seq->push_back(head);
-        seq->push_back(probs);
     }
 
-    torch::Tensor forward(torch::Tensor x) {
-        assert(x.dim() == 2); // B, L
-        assert(x.dtype() == torch::kInt);
-        auto z = emb->forward(x);
-        auto B = z.size(0);
-        auto L = z.size(1);
-        auto E = z.size(2);
-        assert(z.dim() == 3); // B, L, E
-        // Fold out the heads dimension so positional encoding can be applied
-        z = z.view({x.size(0), x.size(1), NHeads, Dim});
-        z = z + apply_positional_encoding(z);
-        z = seq->forward(z);
-        assert(E == Dim * NHeads);
-        assert(B == x.size(0));
-        assert(L == x.size(1));
-        z = z.view({B, L, E});
-        return torch::log_softmax(head->forward(z), 2);
+    OutputType forward(InputType x) {
+        // Embedding: (B, SeqLen) -> (B, SeqLen, ModelDim)
+        auto z = emb->template forward<B, SeqLen>(x);
+
+        // Add sinusoidal positional encoding
+        auto pe = positional_encoding(SeqLen, ModelDim);
+        // pe is (SeqLen, ModelDim), broadcast over batch
+        z = Tensor<B, SeqLen, ModelDim>(z.t() + pe.unsqueeze(0).expand({B, SeqLen, ModelDim}));
+
+        // Encoder layers
+        for (int i = 0; i < NLayers; i++) {
+            z = layers[i]->forward(z);
+        }
+
+        // Linear head + log_softmax: (B, SeqLen, ModelDim) -> (B, SeqLen, VocabSize)
+        auto logits = trails::functional::linear(z, head_w, std::optional{head_b});
+        return logits.template log_softmax<2>();
     }
 
-    torch::Tensor forward(std::string s) {
-        std::vector<uint8_t> bytes(s.begin(), s.end());
-        auto t = torch::tensor(bytes, torch::dtype(torch::kInt));
-        // Add a batch dimension
+    OutputType forward(std::string s) {
+        std::vector<int64_t> bytes(s.begin(), s.end());
+        auto t = torch::tensor(bytes, torch::dtype(torch::kLong));
+        // Add a batch dimension and pad/truncate to SeqLen
         t = t.unsqueeze(0);
-        return forward(t);
+        // Ensure correct sequence length
+        if (t.size(1) < SeqLen) {
+            t = torch::nn::functional::pad(t, torch::nn::functional::PadFuncOptions({0, SeqLen - t.size(1)}));
+        } else if (t.size(1) > SeqLen) {
+            t = t.slice(1, 0, SeqLen);
+        }
+        // Expand to batch size B (replicate the single input)
+        t = t.expand({B, SeqLen});
+        return forward(InputType(t));
     }
 };
-#endif
 
 }
