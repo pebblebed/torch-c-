@@ -112,3 +112,108 @@ TEST(CharformerTests, MultiHeadAttention) {
     EXPECT_EQ(y.size<1>, L);
     EXPECT_EQ(y.size<2>, D);
 }
+
+
+// ============================================================
+// FeedForward tests
+// ============================================================
+
+TEST(CharformerTests, FeedForwardShape) {
+    torch::NoGradGuard no_grad;
+    constexpr int B = 2, SeqLen = 8, ModelDim = 32, FFDim = 64;
+    FeedForward<B, SeqLen, ModelDim, FFDim> ff;
+    auto x = trails::Tensor<B, SeqLen, ModelDim>::randn();
+    auto y = ff.forward(x);
+    EXPECT_EQ(y.dim(), 3);
+    EXPECT_EQ(y.size<0>, B);
+    EXPECT_EQ(y.size<1>, SeqLen);
+    EXPECT_EQ(y.size<2>, ModelDim);
+}
+
+TEST(CharformerTests, FeedForwardOutputFinite) {
+    torch::NoGradGuard no_grad;
+    constexpr int B = 2, SeqLen = 8, ModelDim = 32, FFDim = 64;
+    FeedForward<B, SeqLen, ModelDim, FFDim> ff;
+    auto x = trails::Tensor<B, SeqLen, ModelDim>::randn();
+    auto y = ff.forward(x);
+    // Output should be finite (no NaN or Inf)
+    EXPECT_TRUE(torch::all(torch::isfinite(y.t())).item<bool>());
+    // Output should differ from input (not identity)
+    auto diff = (y.t() - x.t()).abs().sum().item<float>();
+    EXPECT_GT(diff, 0.0f);
+}
+
+// ============================================================
+// TransformerEncoderLayer tests
+// ============================================================
+
+TEST(CharformerTests, TransformerEncoderLayerShape) {
+    torch::NoGradGuard no_grad;
+    constexpr int B = 2, SeqLen = 8, NumHeads = 2, ModelDim = 32, FFDim = 64;
+    TransformerEncoderLayer<B, SeqLen, NumHeads, ModelDim, FFDim> layer;
+    auto x = trails::Tensor<B, SeqLen, ModelDim>::randn();
+    auto y = layer.forward(x);
+    EXPECT_EQ(y.dim(), 3);
+    EXPECT_EQ(y.size<0>, B);
+    EXPECT_EQ(y.size<1>, SeqLen);
+    EXPECT_EQ(y.size<2>, ModelDim);
+}
+
+TEST(CharformerTests, TransformerEncoderLayerOutputFinite) {
+    torch::NoGradGuard no_grad;
+    constexpr int B = 2, SeqLen = 8, NumHeads = 2, ModelDim = 32, FFDim = 64;
+    TransformerEncoderLayer<B, SeqLen, NumHeads, ModelDim, FFDim> layer;
+    auto x = trails::Tensor<B, SeqLen, ModelDim>::randn();
+    auto y = layer.forward(x);
+    // Output should be finite (no NaN or Inf)
+    EXPECT_TRUE(torch::all(torch::isfinite(y.t())).item<bool>());
+}
+
+// ============================================================
+// CharFormer tests
+// ============================================================
+
+TEST(CharformerTests, CharFormerForward) {
+    torch::NoGradGuard no_grad;
+    constexpr int B = 2, SeqLen = 8, VocabSize = 256, ModelDim = 32, NumHeads = 2, FFDim = 64, NLayers = 2;
+    CharFormer<B, SeqLen, VocabSize, ModelDim, NumHeads, FFDim, NLayers> model;
+    // Input: random long indices in [0, VocabSize)
+    auto x = trails::Tensor<B, SeqLen>(torch::randint(0, VocabSize, {B, SeqLen}, torch::kLong));
+    auto y = model.forward(x);
+
+    // Check output shape: (B, SeqLen, VocabSize)
+    EXPECT_EQ(y.dim(), 3);
+    EXPECT_EQ(y.size<0>, B);
+    EXPECT_EQ(y.size<1>, SeqLen);
+    EXPECT_EQ(y.size<2>, VocabSize);
+
+    // Output should be finite
+    EXPECT_TRUE(torch::all(torch::isfinite(y.t())).item<bool>());
+
+    // All values should be <= 0 (log probabilities)
+    EXPECT_TRUE(torch::all(y.t() <= 0.0f).item<bool>());
+
+    // exp along last dim should sum to ~1 (valid probability distribution)
+    auto probs = y.t().exp().sum(/*dim=*/-1);
+    auto max_err = (probs - 1.0f).abs().max().item<float>();
+    EXPECT_LT(max_err, 1e-4f);
+}
+
+TEST(CharformerTests, CharFormerStringForward) {
+    torch::NoGradGuard no_grad;
+    constexpr int B = 2, SeqLen = 8, VocabSize = 256, ModelDim = 32, NumHeads = 2, FFDim = 64, NLayers = 2;
+    CharFormer<B, SeqLen, VocabSize, ModelDim, NumHeads, FFDim, NLayers> model;
+    auto y = model.forward("test");
+
+    // Check output shape: (B, SeqLen, VocabSize)
+    EXPECT_EQ(y.dim(), 3);
+    EXPECT_EQ(y.size<0>, B);
+    EXPECT_EQ(y.size<1>, SeqLen);
+    EXPECT_EQ(y.size<2>, VocabSize);
+
+    // Output should be finite
+    EXPECT_TRUE(torch::all(torch::isfinite(y.t())).item<bool>());
+
+    // All values should be <= 0 (log probabilities)
+    EXPECT_TRUE(torch::all(y.t() <= 0.0f).item<bool>());
+}
