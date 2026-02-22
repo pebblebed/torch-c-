@@ -29,7 +29,7 @@ int main(int argc, char** argv) {
     std::cerr << "Loading dataset from: " << dataset_path << std::endl;
     auto dataset = DatasetDir(dataset_path, B, N_CTX);
 
-    auto net = CharFormer<B, SeqLen, VocabSize, ModelDim, NumHeads, FFDim, NLayers>();
+    auto net = CharFormer<SeqLen, VocabSize, ModelDim, NumHeads, FFDim, NLayers>();
 
     auto train_test_val = train_test_val_split(dataset, 0.1, 0.1);
     auto &train = std::get<0>(train_test_val);
@@ -56,13 +56,14 @@ int main(int argc, char** argv) {
 
         optimizer.zero_grad();
 
-        // Forward pass: input (B, SeqLen) -> logits (B, SeqLen, VocabSize)
-        auto input = Tensor<B, SeqLen>(data);
+        // Forward pass: input BatchTensor<SeqLen> -> logits BatchTensor<SeqLen, VocabSize>
+        auto input = Tensor<B, SeqLen>(data).unbatch();
         auto logits = net.forward(input);
 
-        // Reshape for cross_entropy: logits (B*SeqLen, VocabSize), target (B*SeqLen)
-        auto logits_flat = logits.t().reshape({B * SeqLen, VocabSize});
-        auto target_flat = target.reshape({B * SeqLen});
+        // Reshape for cross_entropy: flatten (batch, SeqLen, VocabSize) -> (batch*SeqLen, VocabSize)
+        auto batch_size = logits.batch_size();
+        auto logits_flat = logits.t().reshape({batch_size * SeqLen, VocabSize});
+        auto target_flat = target.reshape({batch_size * SeqLen});
 
         auto loss = torch::nn::functional::cross_entropy(logits_flat, target_flat);
         loss.backward();

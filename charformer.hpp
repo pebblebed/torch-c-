@@ -72,10 +72,11 @@ public:
 /*
  * FeedForward: two-layer MLP with ReLU activation.
  * ModelDim -> FFDim -> ModelDim
+ * Batch-agnostic: works with any batch size at runtime.
  */
-template<int B, int SeqLen, int ModelDim, int FFDim>
+template<int SeqLen, int ModelDim, int FFDim>
 class FeedForward : public torch::nn::Module {
-    using InputType = Tensor<B, SeqLen, ModelDim>;
+    using InputType = BatchTensor<SeqLen, ModelDim>;
 
     Tensor<FFDim, ModelDim> w1;
     Tensor<FFDim> b1;
@@ -99,23 +100,24 @@ public:
 
 /*
  * TransformerEncoderLayer: MHA + residual + LayerNorm, then FF + residual + LayerNorm.
- * Input/output: Tensor<B, SeqLen, ModelDim>
+ * Batch-agnostic: works with any batch size at runtime.
+ * Input/output: BatchTensor<SeqLen, ModelDim>
  */
-template<int B, int SeqLen, int NumHeads, int ModelDim, int FFDim>
+template<int SeqLen, int NumHeads, int ModelDim, int FFDim>
 class TransformerEncoderLayer : public torch::nn::Module {
 public:
-    using InputType = Tensor<B, SeqLen, ModelDim>;
+    using InputType = BatchTensor<SeqLen, ModelDim>;
 
-    std::shared_ptr<trails::nn::MultiHeadAttention<B, SeqLen, NumHeads, ModelDim>> mha;
-    std::shared_ptr<trails::nn::LayerNorm<B, SeqLen, ModelDim>> ln1;
-    std::shared_ptr<FeedForward<B, SeqLen, ModelDim, FFDim>> ff;
-    std::shared_ptr<trails::nn::LayerNorm<B, SeqLen, ModelDim>> ln2;
+    std::shared_ptr<trails::nn::MultiHeadAttention<NumHeads, ModelDim>> mha;
+    std::shared_ptr<trails::nn::BatchLayerNorm<SeqLen, ModelDim>> ln1;
+    std::shared_ptr<FeedForward<SeqLen, ModelDim, FFDim>> ff;
+    std::shared_ptr<trails::nn::BatchLayerNorm<SeqLen, ModelDim>> ln2;
 
     TransformerEncoderLayer()
-    : mha(std::make_shared<trails::nn::MultiHeadAttention<B, SeqLen, NumHeads, ModelDim>>())
-    , ln1(std::make_shared<trails::nn::LayerNorm<B, SeqLen, ModelDim>>())
-    , ff(std::make_shared<FeedForward<B, SeqLen, ModelDim, FFDim>>())
-    , ln2(std::make_shared<trails::nn::LayerNorm<B, SeqLen, ModelDim>>())
+    : mha(std::make_shared<trails::nn::MultiHeadAttention<NumHeads, ModelDim>>())
+    , ln1(std::make_shared<trails::nn::BatchLayerNorm<SeqLen, ModelDim>>())
+    , ff(std::make_shared<FeedForward<SeqLen, ModelDim, FFDim>>())
+    , ln2(std::make_shared<trails::nn::BatchLayerNorm<SeqLen, ModelDim>>())
     {
         register_module("mha", mha);
         register_module("ln1", ln1);
@@ -125,7 +127,7 @@ public:
 
     InputType forward(InputType x) {
         // Self-attention sublayer with residual + LayerNorm
-        auto attn_out = mha->forward(x);
+        auto attn_out = mha->template forward<SeqLen>(x);
         auto x1 = ln1->forward(attn_out + x);
         // Feedforward sublayer with residual + LayerNorm
         auto ff_out = ff->forward(x1);
@@ -165,15 +167,16 @@ torch::Tensor apply_positional_encoding(torch::Tensor x) {
 /*
  * CharFormer: character-level transformer language model.
  * Embedding + sinusoidal positional encoding + NLayers encoder layers + linear head + log_softmax.
- * Input: Tensor<B, SeqLen> of int64 indices -> Output: Tensor<B, SeqLen, VocabSize> log probabilities.
+ * Batch-agnostic: works with any batch size at runtime.
+ * Input: BatchTensor<SeqLen> of int64 indices -> Output: BatchTensor<SeqLen, VocabSize> log probabilities.
  */
-template<int B, int SeqLen, int VocabSize, int ModelDim, int NumHeads, int FFDim, int NLayers>
+template<int SeqLen, int VocabSize, int ModelDim, int NumHeads, int FFDim, int NLayers>
 class CharFormer : public torch::nn::Module {
-    using InputType = Tensor<B, SeqLen>;
-    using OutputType = Tensor<B, SeqLen, VocabSize>;
+    using InputType = BatchTensor<SeqLen>;
+    using OutputType = BatchTensor<SeqLen, VocabSize>;
 
     std::shared_ptr<trails::nn::Embedding<VocabSize, ModelDim>> emb;
-    std::array<std::shared_ptr<TransformerEncoderLayer<B, SeqLen, NumHeads, ModelDim, FFDim>>, NLayers> layers;
+    std::array<std::shared_ptr<TransformerEncoderLayer<SeqLen, NumHeads, ModelDim, FFDim>>, NLayers> layers;
     Tensor<VocabSize, ModelDim> head_w;
     Tensor<VocabSize> head_b;
 
@@ -185,28 +188,28 @@ public:
     {
         register_module("emb", emb);
         for (int i = 0; i < NLayers; i++) {
-            layers[i] = std::make_shared<TransformerEncoderLayer<B, SeqLen, NumHeads, ModelDim, FFDim>>();
+            layers[i] = std::make_shared<TransformerEncoderLayer<SeqLen, NumHeads, ModelDim, FFDim>>();
             register_module("layer_" + std::to_string(i), layers[i]);
         }
     }
 
     OutputType forward(InputType x) {
-        // Embedding: (B, SeqLen) -> (B, SeqLen, ModelDim)
-        auto z = emb->template forward<B, SeqLen>(x);
+        // Embedding: BatchTensor<SeqLen> -> BatchTensor<SeqLen, ModelDim>
+        auto z = emb->template forward<SeqLen>(x);
 
         // Add sinusoidal positional encoding
+        // pe is (SeqLen, ModelDim), unsqueeze(0) -> (1, SeqLen, ModelDim), broadcasts over batch
         auto pe = positional_encoding(SeqLen, ModelDim);
-        // pe is (SeqLen, ModelDim), broadcast over batch
-        z = Tensor<B, SeqLen, ModelDim>(z.t() + pe.unsqueeze(0).expand({B, SeqLen, ModelDim}));
+        z = BatchTensor<SeqLen, ModelDim>(z.t() + pe.unsqueeze(0));
 
         // Encoder layers
         for (int i = 0; i < NLayers; i++) {
             z = layers[i]->forward(z);
         }
 
-        // Linear head + log_softmax: (B, SeqLen, ModelDim) -> (B, SeqLen, VocabSize)
+        // Linear head + log_softmax: BatchTensor<SeqLen, ModelDim> -> BatchTensor<SeqLen, VocabSize>
         auto logits = trails::functional::linear(z, head_w, std::optional{head_b});
-        return logits.template log_softmax<2>();
+        return logits.template log_softmax<1>();
     }
 
     OutputType forward(std::string s) {
@@ -220,8 +223,7 @@ public:
         } else if (t.size(1) > SeqLen) {
             t = t.slice(1, 0, SeqLen);
         }
-        // Expand to batch size B (replicate the single input)
-        t = t.expand({B, SeqLen});
+        // t is now (1, SeqLen) — a single-element batch
         return forward(InputType(t));
     }
 };
