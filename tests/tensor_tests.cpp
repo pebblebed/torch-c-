@@ -427,7 +427,7 @@ TEST(TensorTest, gelu_shape_and_values) {
     // GELU(0) = 0
     auto zeros = Tensor<2, 3>::zeroes();
     auto gz = zeros.gelu();
-    EXPECT_TRUE(torch::allclose(gz.t(), torch::zeros({2, 3}), 1e-5, 1e-5));
+    EXPECT_TRUE(torch::allclose(gz.t(), Tensor<2, 3>::zeroes().t(), 1e-5, 1e-5));
 
     // Functional version
     auto fg = F::gelu(t);
@@ -442,7 +442,7 @@ TEST(TensorTest, sigmoid_shape_and_values) {
     // sigmoid(0) = 0.5
     auto zeros = Tensor<2, 3>::zeroes();
     auto sz = zeros.sigmoid();
-    auto expected = torch::ones({2, 3}) * 0.5f;
+    auto expected = (Tensor<2, 3>::ones() * 0.5f).t();
     EXPECT_TRUE(torch::allclose(sz.t(), expected, 1e-5, 1e-5));
 
     // Functional version
@@ -458,7 +458,7 @@ TEST(TensorTest, tanh_shape_and_values) {
     // tanh(0) = 0
     auto zeros = Tensor<2, 3>::zeroes();
     auto tz = zeros.tanh();
-    EXPECT_TRUE(torch::allclose(tz.t(), torch::zeros({2, 3}), 1e-5, 1e-5));
+    EXPECT_TRUE(torch::allclose(tz.t(), Tensor<2, 3>::zeroes().t(), 1e-5, 1e-5));
 
     // Functional version
     auto ft = F::tanh(t);
@@ -472,13 +472,13 @@ TEST(TensorTest, softmax_shape_and_values) {
 
     // softmax sums to 1 along dim 1
     auto sums = s.t().sum(1);
-    EXPECT_TRUE(torch::allclose(sums, torch::ones({2}), 1e-5, 1e-5));
+    EXPECT_TRUE(torch::allclose(sums, Tensor<2>::ones().t(), 1e-5, 1e-5));
 
     // softmax along dim 0
     auto s0 = t.softmax<0>();
     EXPECT_TRUE(s0.compare_sizes(torch::IntArrayRef{2, 3}));
     auto sums0 = s0.t().sum(0);
-    EXPECT_TRUE(torch::allclose(sums0, torch::ones({3}), 1e-5, 1e-5));
+    EXPECT_TRUE(torch::allclose(sums0, Tensor<3>::ones().t(), 1e-5, 1e-5));
 
     // Functional version
     auto fs = F::softmax<1>(t);
@@ -492,7 +492,7 @@ TEST(TensorTest, log_softmax_shape_and_values) {
 
     // exp(log_softmax) should sum to 1
     auto exp_ls = ls.t().exp().sum(1);
-    EXPECT_TRUE(torch::allclose(exp_ls, torch::ones({2}), 1e-5, 1e-5));
+    EXPECT_TRUE(torch::allclose(exp_ls, Tensor<2>::ones().t(), 1e-5, 1e-5));
 
     // log_softmax values should all be <= 0
     EXPECT_TRUE((ls.t() <= 0).all().item<bool>());
@@ -522,7 +522,7 @@ TEST(TensorTest, exp_shape_and_values) {
     // exp(0) = 1
     auto zeros = Tensor<2, 3>::zeroes();
     auto ez = zeros.exp();
-    EXPECT_TRUE(torch::allclose(ez.t(), torch::ones({2, 3}), 1e-5, 1e-5));
+    EXPECT_TRUE(torch::allclose(ez.t(), Tensor<2, 3>::ones().t(), 1e-5, 1e-5));
 
     // Functional version
     auto fe = F::exp(t);
@@ -536,7 +536,7 @@ TEST(TensorTest, log_shape_and_values) {
     EXPECT_TRUE(l.compare_sizes(torch::IntArrayRef{2, 3}));
 
     // log(1) = 0
-    EXPECT_TRUE(torch::allclose(l.t(), torch::zeros({2, 3}), 1e-5, 1e-5));
+    EXPECT_TRUE(torch::allclose(l.t(), Tensor<2, 3>::zeroes().t(), 1e-5, 1e-5));
 
     // log(exp(x)) = x roundtrip
     auto x = Tensor<2, 3>::randn();
@@ -805,8 +805,8 @@ TEST(TensorTest, scaled_dot_product_attention_self) {
 TEST(TensorTest, scaled_dot_product_attention_scaling) {
     // Verify scaling: with D=4, scale = 1/sqrt(4) = 0.5
     // Use specific values to verify the math
-    auto Q = Tensor<1, 1, 1, 4>(torch::ones({1, 1, 1, 4}));
-    auto K = Tensor<1, 1, 1, 4>(torch::ones({1, 1, 1, 4}));
+    auto Q = Tensor<1, 1, 1, 4>::ones();
+    auto K = Tensor<1, 1, 1, 4>::ones();
     auto V = Tensor<1, 1, 1, 4>(torch::tensor({{{{1.0f, 2.0f, 3.0f, 4.0f}}}}));
     auto out = F::scaled_dot_product_attention(Q, K, V);
     // Single key, so attention weight is 1.0 on that key
@@ -953,7 +953,7 @@ TEST(IntegrationTest, ConvNet_MNIST) {
     // Verify softmax produces valid probabilities
     auto probs = output.softmax<1>();
     auto sum = probs.t().sum(1);
-    EXPECT_TRUE(torch::allclose(sum, torch::ones({1}), 1e-5, 1e-5));
+    EXPECT_TRUE(torch::allclose(sum, Tensor<1>::ones().t(), 1e-5, 1e-5));
 }
 
 TEST(IntegrationTest, RNN_TextClassification) {
@@ -995,7 +995,7 @@ TEST(IntegrationTest, RNN_TextClassification) {
     // Verify softmax produces valid probabilities per batch element
     auto probs = logits.softmax<1>();
     auto sums = probs.t().sum(1);
-    EXPECT_TRUE(torch::allclose(sums, torch::ones({B}), 1e-5, 1e-5));
+    EXPECT_TRUE(torch::allclose(sums, Tensor<B>::ones().t(), 1e-5, 1e-5));
 }
 
 TEST(IntegrationTest, TransformerEncoderBlock) {
@@ -1066,8 +1066,7 @@ TEST(BatchTensorTest, ConstructionValidation) {
 }
 
 TEST(BatchTensorTest, Relu) {
-    auto raw = torch::randn({5, 8});
-    BatchTensor<8> bt(raw);
+    auto bt = Tensor<5, 8>::randn().unbatch();
     auto out = bt.relu();
     ASSERT_EQ(out.batch_size(), 5);
     ASSERT_EQ(out.t().size(1), 8);
@@ -1077,8 +1076,7 @@ TEST(BatchTensorTest, Relu) {
 
 TEST(BatchTensorTest, Flatten) {
     // BatchTensor<3, 4> flatten<0,1> → BatchTensor<12>
-    auto raw = torch::randn({7, 3, 4});
-    BatchTensor<3, 4> bt(raw);
+    auto bt = Tensor<7, 3, 4>::randn().unbatch();
     auto flat = F::flatten<0, 1>(bt);
     ASSERT_EQ(flat.batch_size(), 7);
     ASSERT_EQ(flat.t().size(0), 7);
@@ -1087,9 +1085,8 @@ TEST(BatchTensorTest, Flatten) {
 
 TEST(BatchTensorTest, Conv2d) {
     // BatchTensor<1, 8, 8> through conv2d with 3x3 kernel, 4 out channels
-    auto raw = torch::randn({5, 1, 8, 8});
-    BatchTensor<1, 8, 8> bt(raw);
-    auto weight = Tensor<4, 1, 3, 3>(torch::randn({4, 1, 3, 3}));
+    auto bt = Tensor<5, 1, 8, 8>::randn().unbatch();
+    auto weight = Tensor<4, 1, 3, 3>::randn();
     auto out = F::conv2d<1, 4, 8, 8, 3, 3>(bt, weight);
     ASSERT_EQ(out.batch_size(), 5);
     ASSERT_EQ(out.t().size(1), 4);  // out channels
@@ -1099,8 +1096,8 @@ TEST(BatchTensorTest, Conv2d) {
 
 TEST(BatchTensorTest, MatmulWeightSharing) {
     // BatchTensor<4, 8> x Tensor<8, 16> → BatchTensor<4, 16>
-    auto a = BatchTensor<4, 8>(torch::randn({7, 4, 8}));
-    auto b = Tensor<8, 16>(torch::randn({8, 16}));
+    auto a = Tensor<7, 4, 8>::randn().unbatch();
+    auto b = Tensor<8, 16>::randn();
     auto out = matmul(a, b);
     ASSERT_EQ(out.batch_size(), 7);
     ASSERT_EQ(out.t().size(1), 4);
@@ -1109,8 +1106,8 @@ TEST(BatchTensorTest, MatmulWeightSharing) {
 
 TEST(BatchTensorTest, MatmulPerSample) {
     // BatchTensor<4, 8> x BatchTensor<8, 16> → BatchTensor<4, 16>
-    auto a = BatchTensor<4, 8>(torch::randn({7, 4, 8}));
-    auto b = BatchTensor<8, 16>(torch::randn({7, 8, 16}));
+    auto a = Tensor<7, 4, 8>::randn().unbatch();
+    auto b = Tensor<7, 8, 16>::randn().unbatch();
     auto out = matmul(a, b);
     ASSERT_EQ(out.batch_size(), 7);
     ASSERT_EQ(out.t().size(1), 4);
@@ -1119,16 +1116,15 @@ TEST(BatchTensorTest, MatmulPerSample) {
 
 TEST(BatchTensorTest, BroadcastAdd) {
     // BatchTensor<8> + Tensor<8> → BatchTensor<8>
-    auto bt = BatchTensor<8>(torch::ones({5, 8}));
-    auto t  = Tensor<8>(torch::ones({8}));
+    auto bt = Tensor<5, 8>::ones().unbatch();
+    auto t  = Tensor<8>::ones();
     auto out = bt + t;
     ASSERT_EQ(out.batch_size(), 5);
     EXPECT_NEAR(out.t().sum().item<float>(), 80.0f, 1e-4f);  // 5*8*2 = 80
 }
 
 TEST(BatchTensorTest, Bind) {
-    auto raw = torch::randn({4, 6});
-    BatchTensor<6> bt(raw);
+    auto bt = Tensor<4, 6>::randn().unbatch();
     auto bound = bt.bind<4>();
     ASSERT_EQ(bound.t().size(0), 4);
     ASSERT_EQ(bound.t().size(1), 6);
@@ -1141,20 +1137,18 @@ TEST(BatchTensorTest, Bind) {
 // ============================================================
 
 TEST(BatchTensorTest, Gelu) {
-    auto raw = torch::randn({5, 8});
-    BatchTensor<8> bt(raw);
+    auto bt = Tensor<5, 8>::randn().unbatch();
     auto out = bt.gelu();
     ASSERT_EQ(out.batch_size(), 5);
     ASSERT_EQ(out.t().size(1), 8);
     // GELU(0) ≈ 0
-    auto zeros = BatchTensor<4>(torch::zeros({3, 4}));
+    auto zeros = Tensor<3, 4>::zeroes().unbatch();
     auto gz = zeros.gelu();
     EXPECT_NEAR(gz.t().sum().item<float>(), 0.0f, 1e-5f);
 }
 
 TEST(BatchTensorTest, Sigmoid) {
-    auto raw = torch::randn({5, 8});
-    BatchTensor<8> bt(raw);
+    auto bt = Tensor<5, 8>::randn().unbatch();
     auto out = bt.sigmoid();
     ASSERT_EQ(out.batch_size(), 5);
     ASSERT_EQ(out.t().size(1), 8);
@@ -1164,8 +1158,7 @@ TEST(BatchTensorTest, Sigmoid) {
 }
 
 TEST(BatchTensorTest, Tanh) {
-    auto raw = torch::randn({5, 8});
-    BatchTensor<8> bt(raw);
+    auto bt = Tensor<5, 8>::randn().unbatch();
     auto out = bt.tanh();
     ASSERT_EQ(out.batch_size(), 5);
     ASSERT_EQ(out.t().size(1), 8);
@@ -1175,8 +1168,7 @@ TEST(BatchTensorTest, Tanh) {
 }
 
 TEST(BatchTensorTest, Softmax) {
-    auto raw = torch::randn({5, 10});
-    BatchTensor<10> bt(raw);
+    auto bt = Tensor<5, 10>::randn().unbatch();
     auto out = bt.softmax<0>();  // softmax over math dim 0
     ASSERT_EQ(out.batch_size(), 5);
     ASSERT_EQ(out.t().size(1), 10);
@@ -1188,8 +1180,7 @@ TEST(BatchTensorTest, Softmax) {
 }
 
 TEST(BatchTensorTest, LogSoftmax) {
-    auto raw = torch::randn({5, 10});
-    BatchTensor<10> bt(raw);
+    auto bt = Tensor<5, 10>::randn().unbatch();
     auto out = bt.log_softmax<0>();
     ASSERT_EQ(out.batch_size(), 5);
     ASSERT_EQ(out.t().size(1), 10);
@@ -1201,8 +1192,7 @@ TEST(BatchTensorTest, LogSoftmax) {
 }
 
 TEST(BatchTensorTest, Exp) {
-    auto raw = torch::zeros({3, 4});
-    BatchTensor<4> bt(raw);
+    auto bt = Tensor<3, 4>::zeroes().unbatch();
     auto out = bt.exp();
     ASSERT_EQ(out.batch_size(), 3);
     // exp(0) = 1
@@ -1210,8 +1200,7 @@ TEST(BatchTensorTest, Exp) {
 }
 
 TEST(BatchTensorTest, Log) {
-    auto raw = torch::ones({3, 4});
-    BatchTensor<4> bt(raw);
+    auto bt = Tensor<3, 4>::ones().unbatch();
     auto out = bt.log();
     ASSERT_EQ(out.batch_size(), 3);
     // log(1) = 0
@@ -1219,8 +1208,7 @@ TEST(BatchTensorTest, Log) {
 }
 
 TEST(BatchTensorTest, Sqrt) {
-    auto raw = torch::ones({3, 4}) * 4.0f;
-    BatchTensor<4> bt(raw);
+    auto bt = (Tensor<3, 4>::ones() * 4.0f).unbatch();
     auto out = bt.sqrt();
     ASSERT_EQ(out.batch_size(), 3);
     // sqrt(4) = 2
@@ -1228,8 +1216,7 @@ TEST(BatchTensorTest, Sqrt) {
 }
 
 TEST(BatchTensorTest, BatchMean) {
-    auto raw = torch::ones({5, 8}) * 3.0f;
-    BatchTensor<8> bt(raw);
+    auto bt = (Tensor<5, 8>::ones() * 3.0f).unbatch();
     auto mean = bt.batch_mean();
     // Result is Tensor<8> (no batch dim)
     ASSERT_EQ(mean.dim(), 1);
@@ -1239,8 +1226,7 @@ TEST(BatchTensorTest, BatchMean) {
 }
 
 TEST(BatchTensorTest, Reshape) {
-    auto raw = torch::randn({5, 3, 4});
-    BatchTensor<3, 4> bt(raw);
+    auto bt = Tensor<5, 3, 4>::randn().unbatch();
     auto reshaped = bt.reshape<12>();
     ASSERT_EQ(reshaped.batch_size(), 5);
     ASSERT_EQ(reshaped.t().size(0), 5);
@@ -1252,8 +1238,7 @@ TEST(BatchTensorTest, Reshape) {
 }
 
 TEST(BatchTensorTest, Transpose) {
-    auto raw = torch::randn({5, 3, 4});
-    BatchTensor<3, 4> bt(raw);
+    auto bt = Tensor<5, 3, 4>::randn().unbatch();
     auto transposed = bt.transpose<0, 1>();
     ASSERT_EQ(transposed.batch_size(), 5);
     ASSERT_EQ(transposed.t().size(0), 5);
@@ -1262,8 +1247,7 @@ TEST(BatchTensorTest, Transpose) {
 }
 
 TEST(BatchTensorTest, StreamOutput) {
-    auto raw = torch::ones({2, 3});
-    BatchTensor<3> bt(raw);
+    auto bt = Tensor<2, 3>::ones().unbatch();
     std::ostringstream oss;
     oss << bt;
     std::string str = oss.str();
@@ -1276,109 +1260,109 @@ TEST(BatchTensorTest, StreamOutput) {
 // ============================================================
 
 TEST(BatchTensorTest, AddBatchBatch) {
-    auto a = BatchTensor<4>(torch::ones({3, 4}));
-    auto b = BatchTensor<4>(torch::ones({3, 4}) * 2.0f);
+    auto a = Tensor<3, 4>::ones().unbatch();
+    auto b = (Tensor<3, 4>::ones() * 2.0f).unbatch();
     auto out = a + b;
     ASSERT_EQ(out.batch_size(), 3);
     EXPECT_NEAR(out.t().sum().item<float>(), 36.0f, 1e-5f);  // 3*4*3
 }
 
 TEST(BatchTensorTest, SubBatchBatch) {
-    auto a = BatchTensor<4>(torch::ones({3, 4}) * 5.0f);
-    auto b = BatchTensor<4>(torch::ones({3, 4}) * 2.0f);
+    auto a = (Tensor<3, 4>::ones() * 5.0f).unbatch();
+    auto b = (Tensor<3, 4>::ones() * 2.0f).unbatch();
     auto out = a - b;
     ASSERT_EQ(out.batch_size(), 3);
     EXPECT_NEAR(out.t().sum().item<float>(), 36.0f, 1e-5f);  // 3*4*3
 }
 
 TEST(BatchTensorTest, MulBatchBatch) {
-    auto a = BatchTensor<4>(torch::ones({3, 4}) * 3.0f);
-    auto b = BatchTensor<4>(torch::ones({3, 4}) * 2.0f);
+    auto a = (Tensor<3, 4>::ones() * 3.0f).unbatch();
+    auto b = (Tensor<3, 4>::ones() * 2.0f).unbatch();
     auto out = a * b;
     ASSERT_EQ(out.batch_size(), 3);
     EXPECT_NEAR(out.t().sum().item<float>(), 72.0f, 1e-5f);  // 3*4*6
 }
 
 TEST(BatchTensorTest, DivBatchBatch) {
-    auto a = BatchTensor<4>(torch::ones({3, 4}) * 6.0f);
-    auto b = BatchTensor<4>(torch::ones({3, 4}) * 2.0f);
+    auto a = (Tensor<3, 4>::ones() * 6.0f).unbatch();
+    auto b = (Tensor<3, 4>::ones() * 2.0f).unbatch();
     auto out = a / b;
     ASSERT_EQ(out.batch_size(), 3);
     EXPECT_NEAR(out.t().sum().item<float>(), 36.0f, 1e-5f);  // 3*4*3
 }
 
 TEST(BatchTensorTest, ScalarMul) {
-    auto a = BatchTensor<4>(torch::ones({3, 4}));
+    auto a = Tensor<3, 4>::ones().unbatch();
     auto out = a * 5.0f;
     ASSERT_EQ(out.batch_size(), 3);
     EXPECT_NEAR(out.t().sum().item<float>(), 60.0f, 1e-5f);  // 3*4*5
 }
 
 TEST(BatchTensorTest, ScalarDiv) {
-    auto a = BatchTensor<4>(torch::ones({3, 4}) * 10.0f);
+    auto a = (Tensor<3, 4>::ones() * 10.0f).unbatch();
     auto out = a / 2.0f;
     ASSERT_EQ(out.batch_size(), 3);
     EXPECT_NEAR(out.t().sum().item<float>(), 60.0f, 1e-5f);  // 3*4*5
 }
 
 TEST(BatchTensorTest, ScalarMulReverse) {
-    auto a = BatchTensor<4>(torch::ones({3, 4}));
+    auto a = Tensor<3, 4>::ones().unbatch();
     auto out = 5.0f * a;
     ASSERT_EQ(out.batch_size(), 3);
     EXPECT_NEAR(out.t().sum().item<float>(), 60.0f, 1e-5f);
 }
 
 TEST(BatchTensorTest, BroadcastSub) {
-    auto bt = BatchTensor<8>(torch::ones({5, 8}) * 3.0f);
-    auto t  = Tensor<8>(torch::ones({8}));
+    auto bt = (Tensor<5, 8>::ones() * 3.0f).unbatch();
+    auto t  = Tensor<8>::ones();
     auto out = bt - t;
     ASSERT_EQ(out.batch_size(), 5);
     EXPECT_NEAR(out.t().sum().item<float>(), 80.0f, 1e-5f);  // 5*8*2
 }
 
 TEST(BatchTensorTest, BroadcastMul) {
-    auto bt = BatchTensor<8>(torch::ones({5, 8}) * 3.0f);
-    auto t  = Tensor<8>(torch::ones({8}) * 2.0f);
+    auto bt = (Tensor<5, 8>::ones() * 3.0f).unbatch();
+    auto t  = Tensor<8>::ones() * 2.0f;
     auto out = bt * t;
     ASSERT_EQ(out.batch_size(), 5);
     EXPECT_NEAR(out.t().sum().item<float>(), 240.0f, 1e-5f);  // 5*8*6
 }
 
 TEST(BatchTensorTest, BroadcastDiv) {
-    auto bt = BatchTensor<8>(torch::ones({5, 8}) * 6.0f);
-    auto t  = Tensor<8>(torch::ones({8}) * 2.0f);
+    auto bt = (Tensor<5, 8>::ones() * 6.0f).unbatch();
+    auto t  = Tensor<8>::ones() * 2.0f;
     auto out = bt / t;
     ASSERT_EQ(out.batch_size(), 5);
     EXPECT_NEAR(out.t().sum().item<float>(), 120.0f, 1e-5f);  // 5*8*3
 }
 
 TEST(BatchTensorTest, BroadcastReverseAdd) {
-    auto t  = Tensor<8>(torch::ones({8}) * 2.0f);
-    auto bt = BatchTensor<8>(torch::ones({5, 8}) * 3.0f);
+    auto t  = Tensor<8>::ones() * 2.0f;
+    auto bt = (Tensor<5, 8>::ones() * 3.0f).unbatch();
     auto out = t + bt;
     ASSERT_EQ(out.batch_size(), 5);
     EXPECT_NEAR(out.t().sum().item<float>(), 200.0f, 1e-5f);  // 5*8*5
 }
 
 TEST(BatchTensorTest, BroadcastReverseSub) {
-    auto t  = Tensor<8>(torch::ones({8}) * 10.0f);
-    auto bt = BatchTensor<8>(torch::ones({5, 8}) * 3.0f);
+    auto t  = Tensor<8>::ones() * 10.0f;
+    auto bt = (Tensor<5, 8>::ones() * 3.0f).unbatch();
     auto out = t - bt;
     ASSERT_EQ(out.batch_size(), 5);
     EXPECT_NEAR(out.t().sum().item<float>(), 280.0f, 1e-5f);  // 5*8*7
 }
 
 TEST(BatchTensorTest, BroadcastReverseMul) {
-    auto t  = Tensor<8>(torch::ones({8}) * 4.0f);
-    auto bt = BatchTensor<8>(torch::ones({5, 8}) * 3.0f);
+    auto t  = Tensor<8>::ones() * 4.0f;
+    auto bt = (Tensor<5, 8>::ones() * 3.0f).unbatch();
     auto out = t * bt;
     ASSERT_EQ(out.batch_size(), 5);
     EXPECT_NEAR(out.t().sum().item<float>(), 480.0f, 1e-5f);  // 5*8*12
 }
 
 TEST(BatchTensorTest, BroadcastReverseDiv) {
-    auto t  = Tensor<8>(torch::ones({8}) * 12.0f);
-    auto bt = BatchTensor<8>(torch::ones({5, 8}) * 3.0f);
+    auto t  = Tensor<8>::ones() * 12.0f;
+    auto bt = (Tensor<5, 8>::ones() * 3.0f).unbatch();
     auto out = t / bt;
     ASSERT_EQ(out.batch_size(), 5);
     EXPECT_NEAR(out.t().sum().item<float>(), 160.0f, 1e-5f);  // 5*8*4
@@ -1390,7 +1374,7 @@ TEST(BatchTensorTest, BroadcastReverseDiv) {
 
 TEST(BatchTensorTest, UnbatchMember) {
     // Tensor<4, 6>::unbatch() → BatchTensor<6> with batch_size=4
-    auto t = Tensor<4, 6>(torch::randn({4, 6}));
+    auto t = Tensor<4, 6>::randn();
     auto bt = t.unbatch();
     ASSERT_EQ(bt.batch_size(), 4);
     ASSERT_EQ(bt.t().size(1), 6);
@@ -1400,7 +1384,7 @@ TEST(BatchTensorTest, UnbatchMember) {
 
 TEST(BatchTensorTest, UnbatchFreeFunction) {
     // unbatch(Tensor<4, 6>) → BatchTensor<6>
-    auto t = Tensor<4, 6>(torch::randn({4, 6}));
+    auto t = Tensor<4, 6>::randn();
     auto bt = unbatch(t);
     ASSERT_EQ(bt.batch_size(), 4);
     ASSERT_EQ(bt.t().size(1), 6);
@@ -1409,8 +1393,7 @@ TEST(BatchTensorTest, UnbatchFreeFunction) {
 
 TEST(BatchTensorTest, UnbatchBindRoundtrip) {
     // BatchTensor<6> → bind<4> → Tensor<4, 6> → unbatch → BatchTensor<6>
-    auto raw = torch::randn({4, 6});
-    BatchTensor<6> bt(raw);
+    auto bt = Tensor<4, 6>::randn().unbatch();
     auto t = bt.bind<4>();
     auto bt2 = t.unbatch();
     ASSERT_EQ(bt2.batch_size(), 4);
@@ -1419,7 +1402,7 @@ TEST(BatchTensorTest, UnbatchBindRoundtrip) {
 
 TEST(BatchTensorTest, Unbatch3D) {
     // Tensor<2, 3, 4>::unbatch() → BatchTensor<3, 4> with batch_size=2
-    auto t = Tensor<2, 3, 4>(torch::randn({2, 3, 4}));
+    auto t = Tensor<2, 3, 4>::randn();
     auto bt = t.unbatch();
     ASSERT_EQ(bt.batch_size(), 2);
     ASSERT_EQ(bt.t().size(1), 3);
@@ -1433,17 +1416,17 @@ TEST(BatchTensorTest, Unbatch3D) {
 
 TEST(BatchTensorTest, FunctionalLinear1D) {
     // F::linear(BatchTensor<16>, Tensor<8, 16>) → BatchTensor<8>
-    auto input = BatchTensor<16>(torch::randn({5, 16}));
-    auto weight = Tensor<8, 16>(torch::randn({8, 16}));
+    auto input = Tensor<5, 16>::randn().unbatch();
+    auto weight = Tensor<8, 16>::randn();
     auto out = F::linear(input, weight);
     ASSERT_EQ(out.batch_size(), 5);
     ASSERT_EQ(out.t().size(1), 8);
 }
 
 TEST(BatchTensorTest, FunctionalLinear1DWithBias) {
-    auto input = BatchTensor<16>(torch::randn({5, 16}));
-    auto weight = Tensor<8, 16>(torch::randn({8, 16}));
-    auto bias = std::optional<Tensor<8>>(Tensor<8>(torch::randn({8})));
+    auto input = Tensor<5, 16>::randn().unbatch();
+    auto weight = Tensor<8, 16>::randn();
+    auto bias = std::optional<Tensor<8>>(Tensor<8>::randn());
     auto out = F::linear(input, weight, bias);
     ASSERT_EQ(out.batch_size(), 5);
     ASSERT_EQ(out.t().size(1), 8);
@@ -1451,8 +1434,8 @@ TEST(BatchTensorTest, FunctionalLinear1DWithBias) {
 
 TEST(BatchTensorTest, FunctionalLinear2D) {
     // F::linear(BatchTensor<4, 16>, Tensor<8, 16>) → BatchTensor<4, 8>
-    auto input = BatchTensor<4, 16>(torch::randn({5, 4, 16}));
-    auto weight = Tensor<8, 16>(torch::randn({8, 16}));
+    auto input = Tensor<5, 4, 16>::randn().unbatch();
+    auto weight = Tensor<8, 16>::randn();
     auto out = F::linear(input, weight);
     ASSERT_EQ(out.batch_size(), 5);
     ASSERT_EQ(out.t().size(1), 4);
@@ -1461,7 +1444,7 @@ TEST(BatchTensorTest, FunctionalLinear2D) {
 
 TEST(BatchTensorTest, FunctionalMaxPool2d) {
     // BatchTensor<1, 8, 8> → max_pool2d 2x2 stride 2 → BatchTensor<1, 4, 4>
-    auto input = BatchTensor<1, 8, 8>(torch::randn({5, 1, 8, 8}));
+    auto input = Tensor<5, 1, 8, 8>::randn().unbatch();
     auto out = F::max_pool2d<2, 2, 2, 2>(input);
     ASSERT_EQ(out.batch_size(), 5);
     ASSERT_EQ(out.t().size(1), 1);
@@ -1471,7 +1454,7 @@ TEST(BatchTensorTest, FunctionalMaxPool2d) {
 
 TEST(BatchTensorTest, FunctionalAvgPool2d) {
     // BatchTensor<1, 8, 8> → avg_pool2d 2x2 stride 2 → BatchTensor<1, 4, 4>
-    auto input = BatchTensor<1, 8, 8>(torch::ones({5, 1, 8, 8}) * 2.0f);
+    auto input = (Tensor<5, 1, 8, 8>::ones() * 2.0f).unbatch();
     auto out = F::avg_pool2d<2, 2, 2, 2>(input);
     ASSERT_EQ(out.batch_size(), 5);
     ASSERT_EQ(out.t().size(2), 4);
@@ -1485,7 +1468,7 @@ TEST(BatchTensorTest, FunctionalAvgPool2d) {
 // ============================================================
 
 TEST(BatchFunctionalTest, Relu) {
-    auto input = BatchTensor<8>(torch::randn({5, 8}));
+    auto input = Tensor<5, 8>::randn().unbatch();
     auto out = F::relu(input);
     ASSERT_EQ(out.batch_size(), 5);
     ASSERT_EQ(out.t().size(1), 8);
@@ -1496,12 +1479,12 @@ TEST(BatchFunctionalTest, Relu) {
 }
 
 TEST(BatchFunctionalTest, Gelu) {
-    auto input = BatchTensor<8>(torch::randn({5, 8}));
+    auto input = Tensor<5, 8>::randn().unbatch();
     auto out = F::gelu(input);
     ASSERT_EQ(out.batch_size(), 5);
     ASSERT_EQ(out.t().size(1), 8);
     // GELU(0) ≈ 0
-    auto zeros_in = BatchTensor<4>(torch::zeros({3, 4}));
+    auto zeros_in = Tensor<3, 4>::zeroes().unbatch();
     auto gz = F::gelu(zeros_in);
     EXPECT_NEAR(gz.t().sum().item<float>(), 0.0f, 1e-5f);
     // Verify matches method version
@@ -1510,14 +1493,14 @@ TEST(BatchFunctionalTest, Gelu) {
 }
 
 TEST(BatchFunctionalTest, Sigmoid) {
-    auto input = BatchTensor<8>(torch::randn({5, 8}));
+    auto input = Tensor<5, 8>::randn().unbatch();
     auto out = F::sigmoid(input);
     ASSERT_EQ(out.batch_size(), 5);
     ASSERT_EQ(out.t().size(1), 8);
     EXPECT_TRUE((out.t() > 0).all().item<bool>());
     EXPECT_TRUE((out.t() < 1).all().item<bool>());
     // sigmoid(0) = 0.5
-    auto zeros_in = BatchTensor<4>(torch::zeros({3, 4}));
+    auto zeros_in = Tensor<3, 4>::zeroes().unbatch();
     auto sz = F::sigmoid(zeros_in);
     EXPECT_NEAR(sz.t().mean().item<float>(), 0.5f, 1e-5f);
     // Verify matches method version
@@ -1526,14 +1509,14 @@ TEST(BatchFunctionalTest, Sigmoid) {
 }
 
 TEST(BatchFunctionalTest, Tanh) {
-    auto input = BatchTensor<8>(torch::randn({5, 8}));
+    auto input = Tensor<5, 8>::randn().unbatch();
     auto out = F::tanh(input);
     ASSERT_EQ(out.batch_size(), 5);
     ASSERT_EQ(out.t().size(1), 8);
     EXPECT_TRUE((out.t() > -1).all().item<bool>());
     EXPECT_TRUE((out.t() < 1).all().item<bool>());
     // tanh(0) = 0
-    auto zeros_in = BatchTensor<4>(torch::zeros({3, 4}));
+    auto zeros_in = Tensor<3, 4>::zeroes().unbatch();
     auto tz = F::tanh(zeros_in);
     EXPECT_NEAR(tz.t().sum().item<float>(), 0.0f, 1e-5f);
     // Verify matches method version
@@ -1542,7 +1525,7 @@ TEST(BatchFunctionalTest, Tanh) {
 }
 
 TEST(BatchFunctionalTest, Softmax) {
-    auto input = BatchTensor<10>(torch::randn({5, 10}));
+    auto input = Tensor<5, 10>::randn().unbatch();
     auto out = F::softmax<0>(input);
     ASSERT_EQ(out.batch_size(), 5);
     ASSERT_EQ(out.t().size(1), 10);
@@ -1557,7 +1540,7 @@ TEST(BatchFunctionalTest, Softmax) {
 }
 
 TEST(BatchFunctionalTest, Dropout) {
-    auto input = BatchTensor<8>(torch::randn({5, 8}));
+    auto input = Tensor<5, 8>::randn().unbatch();
     // training=false → identity
     auto out = F::dropout(input, 0.5, false);
     ASSERT_EQ(out.batch_size(), 5);
@@ -1570,7 +1553,7 @@ TEST(BatchFunctionalTest, Dropout) {
 
 TEST(BatchFunctionalTest, DropoutHighDim) {
     // Also test with higher-dimensional BatchTensor
-    auto input = BatchTensor<3, 4>(torch::randn({5, 3, 4}));
+    auto input = Tensor<5, 3, 4>::randn().unbatch();
     auto out = F::dropout(input, 0.5, false);
     ASSERT_EQ(out.batch_size(), 5);
     ASSERT_EQ(out.t().size(1), 3);
@@ -1580,7 +1563,7 @@ TEST(BatchFunctionalTest, DropoutHighDim) {
 
 TEST(BatchTensorTest, CrossEntropyDynamicBatch) {
     // BatchTensor<10> logits + torch::Tensor labels → scalar
-    auto logits = BatchTensor<10>(torch::randn({5, 10}));
+    auto logits = Tensor<5, 10>::randn().unbatch();
     auto labels = torch::randint(0, 10, {5}, torch::kLong);
     auto loss = F::cross_entropy(logits, labels);
     ASSERT_EQ(loss.dim(), 0);  // scalar
@@ -1589,7 +1572,7 @@ TEST(BatchTensorTest, CrossEntropyDynamicBatch) {
 
 TEST(BatchTensorTest, CrossEntropyStaticBatch) {
     // Tensor<4, 10> logits + Tensor<4> labels → scalar
-    auto logits = Tensor<4, 10>(torch::randn({4, 10}));
+    auto logits = Tensor<4, 10>::randn();
     auto labels = Tensor<4>(torch::randint(0, 10, {4}, torch::kLong));
     auto loss = F::cross_entropy(logits, labels);
     ASSERT_EQ(loss.dim(), 0);
@@ -1626,7 +1609,7 @@ TEST(CrossEntropyTest, StaticBatchUniformInput) {
     // Uniform logits → loss = log(num_classes)
     constexpr int B = 8;
     constexpr int C = 10;
-    auto logits = Tensor<B, C>(torch::zeros({B, C}));
+    auto logits = Tensor<B, C>::zeroes();
     auto labels = Tensor<B>(torch::randint(0, C, {B}, torch::kLong));
     auto loss = F::cross_entropy(logits, labels);
     ASSERT_EQ(loss.dim(), 0);
@@ -1637,7 +1620,7 @@ TEST(CrossEntropyTest, StaticBatchUniformInput) {
 TEST(CrossEntropyTest, StaticBatchNonNegative) {
     // Cross-entropy loss must always be non-negative
     for (int trial = 0; trial < 5; trial++) {
-        auto logits = Tensor<4, 6>(torch::randn({4, 6}));
+        auto logits = Tensor<4, 6>::randn();
         auto labels = Tensor<4>(torch::randint(0, 6, {4}, torch::kLong));
         auto loss = F::cross_entropy(logits, labels);
         ASSERT_EQ(loss.dim(), 0);
@@ -1671,7 +1654,7 @@ TEST(CrossEntropyTest, DynamicBatchWrongLabels) {
 TEST(CrossEntropyTest, DynamicBatchUniformInput) {
     // Uniform logits → loss = log(num_classes)
     constexpr int C = 10;
-    auto logits = BatchTensor<C>(torch::zeros({8, C}));
+    auto logits = Tensor<8, C>::zeroes().unbatch();
     auto labels = torch::randint(0, C, {8}, torch::kLong);
     auto loss = F::cross_entropy(logits, labels);
     ASSERT_EQ(loss.dim(), 0);
@@ -1681,7 +1664,7 @@ TEST(CrossEntropyTest, DynamicBatchUniformInput) {
 
 TEST(CrossEntropyTest, DynamicBatchNonNegative) {
     for (int trial = 0; trial < 5; trial++) {
-        auto logits = BatchTensor<6>(torch::randn({4, 6}));
+        auto logits = Tensor<4, 6>::randn().unbatch();
         auto labels = torch::randint(0, 6, {4}, torch::kLong);
         auto loss = F::cross_entropy(logits, labels);
         ASSERT_EQ(loss.dim(), 0);
@@ -1717,7 +1700,7 @@ TEST(CrossEntropyTest, StaticAndDynamicAgree) {
 
 TEST(BatchAgnosticTest, LinearBasic) {
     trails::nn::Linear<16, 8> linear;
-    auto input = BatchTensor<16>(torch::randn({5, 16}));
+    auto input = Tensor<5, 16>::randn().unbatch();
     auto out = linear.forward(input);
     ASSERT_EQ(out.batch_size(), 5);
     ASSERT_EQ(out.t().size(1), 8);
@@ -1726,11 +1709,11 @@ TEST(BatchAgnosticTest, LinearBasic) {
 TEST(BatchAgnosticTest, LinearDifferentBatchSizes) {
     trails::nn::Linear<16, 8> linear;
     // Same module, different batch sizes
-    auto out3 = linear.forward(BatchTensor<16>(torch::randn({3, 16})));
+    auto out3 = linear.forward(Tensor<3, 16>::randn().unbatch());
     ASSERT_EQ(out3.batch_size(), 3);
-    auto out7 = linear.forward(BatchTensor<16>(torch::randn({7, 16})));
+    auto out7 = linear.forward(Tensor<7, 16>::randn().unbatch());
     ASSERT_EQ(out7.batch_size(), 7);
-    auto out1 = linear.forward(BatchTensor<16>(torch::randn({1, 16})));
+    auto out1 = linear.forward(Tensor<1, 16>::randn().unbatch());
     ASSERT_EQ(out1.batch_size(), 1);
 }
 
@@ -1746,7 +1729,7 @@ TEST(BatchAgnosticTest, LinearParameters) {
 
 TEST(BatchAgnosticTest, LayerNormBasic) {
     trails::nn::LayerNorm<32> ln;
-    auto input = BatchTensor<32>(torch::randn({5, 32}));
+    auto input = Tensor<5, 32>::randn().unbatch();
     auto out = ln.forward(input);
     ASSERT_EQ(out.batch_size(), 5);
     ASSERT_EQ(out.t().size(1), 32);
@@ -1755,11 +1738,11 @@ TEST(BatchAgnosticTest, LayerNormBasic) {
 TEST(BatchAgnosticTest, LayerNormDifferentBatchSizes) {
     trails::nn::LayerNorm<32> ln;
     // Same module, different batch sizes
-    auto out3 = ln.forward(BatchTensor<32>(torch::randn({3, 32})));
+    auto out3 = ln.forward(Tensor<3, 32>::randn().unbatch());
     ASSERT_EQ(out3.batch_size(), 3);
-    auto out7 = ln.forward(BatchTensor<32>(torch::randn({7, 32})));
+    auto out7 = ln.forward(Tensor<7, 32>::randn().unbatch());
     ASSERT_EQ(out7.batch_size(), 7);
-    auto out1 = ln.forward(BatchTensor<32>(torch::randn({1, 32})));
+    auto out1 = ln.forward(Tensor<1, 32>::randn().unbatch());
     ASSERT_EQ(out1.batch_size(), 1);
 }
 
@@ -1774,7 +1757,7 @@ TEST(BatchAgnosticTest, LayerNormParameters) {
 
 TEST(BatchAgnosticTest, LayerNormNormalization) {
     trails::nn::LayerNorm<64> ln;
-    auto input = BatchTensor<64>(torch::randn({4, 64}) * 10.0f + 5.0f);
+    auto input = (Tensor<4, 64>::randn() * 10.0f + 5.0f).unbatch();
     auto out = ln.forward(input);
     // After LayerNorm, per-sample mean ≈ 0, var ≈ 1
     for (int i = 0; i < 4; i++) {
@@ -1835,7 +1818,7 @@ TEST(EdgeCaseTest, ArangeDefault) {
 }
 
 TEST(EdgeCaseTest, Rsqrt) {
-    auto t = Tensor<4>(torch::ones({4}) * 4.0f);
+    auto t = Tensor<4>::ones() * 4.0f;
     auto out = t.rsqrt();
     // rsqrt(4) = 1/sqrt(4) = 0.5
     ASSERT_EQ(out.t().size(0), 4);
@@ -1853,7 +1836,7 @@ TEST(EdgeCaseTest, Max) {
 }
 
 TEST(EdgeCaseTest, TensorStr) {
-    auto t = Tensor<2>(torch::ones({2}));
+    auto t = Tensor<2>::ones();
     std::string s = t.str();
     // Should contain the tensor values — "1" should appear
     EXPECT_FALSE(s.empty());
@@ -1861,7 +1844,7 @@ TEST(EdgeCaseTest, TensorStr) {
 }
 
 TEST(EdgeCaseTest, TensorStreamOutput) {
-    auto t = Tensor<2>(torch::ones({2}));
+    auto t = Tensor<2>::ones();
     std::ostringstream oss;
     oss << t;
     EXPECT_FALSE(oss.str().empty());
@@ -1869,13 +1852,13 @@ TEST(EdgeCaseTest, TensorStreamOutput) {
 
 TEST(EdgeCaseTest, Item) {
     // Single-element tensor → item<float>()
-    auto t = Tensor<1>(torch::ones({1}) * 42.0f);
+    auto t = Tensor<1>::ones() * 42.0f;
     EXPECT_NEAR(t.item<float>(), 42.0f, 1e-5f);
     EXPECT_EQ(t.item<int>(), 42);
 }
 
 TEST(EdgeCaseTest, DataPtr) {
-    auto t = Tensor<4>(torch::ones({4}) * 7.0f);
+    auto t = Tensor<4>::ones() * 7.0f;
     const float* ptr = t.data_ptr<float>();
     ASSERT_NE(ptr, nullptr);
     for (int i = 0; i < 4; i++) {
@@ -1898,7 +1881,7 @@ TEST(EdgeCaseTest, ScalarAlias) {
 }
 
 TEST(EdgeCaseTest, ReverseScalarOps) {
-    auto t = Tensor<4>(torch::ones({4}) * 2.0f);
+    auto t = Tensor<4>::ones() * 2.0f;
     // float + Tensor
     auto add = 10.0f + t;
     EXPECT_NEAR(add.t().sum().item<float>(), 48.0f, 1e-5f);  // 4*12
@@ -1920,8 +1903,7 @@ TEST(EdgeCaseTest, ReverseScalarOps) {
 
 TEST(EdgeCaseTest, BatchTensorSingleSample) {
     // batch_size=1 is a degenerate but valid case
-    auto raw = torch::randn({1, 8});
-    BatchTensor<8> bt(raw);
+    auto bt = Tensor<1, 8>::randn().unbatch();
     ASSERT_EQ(bt.batch_size(), 1);
     // All ops should still work
     auto out = bt.relu();
@@ -1945,8 +1927,7 @@ TEST(EdgeCaseTest, BatchTensorDimMismatch) {
 
 TEST(EdgeCaseTest, BatchTensorHighDim) {
     // BatchTensor with 3 mathematical dims
-    auto raw = torch::randn({4, 2, 3, 5});
-    BatchTensor<2, 3, 5> bt(raw);
+    auto bt = Tensor<4, 2, 3, 5>::randn().unbatch();
     ASSERT_EQ(bt.batch_size(), 4);
     ASSERT_EQ(bt.t().dim(), 4);
     // Activations
@@ -1965,8 +1946,7 @@ TEST(EdgeCaseTest, BatchTensorHighDim) {
 
 TEST(EdgeCaseTest, BatchTensorLargeBatch) {
     // Stress test with large batch — shape checks still work
-    auto raw = torch::randn({1000, 4});
-    BatchTensor<4> bt(raw);
+    auto bt = Tensor<1000, 4>::randn().unbatch();
     ASSERT_EQ(bt.batch_size(), 1000);
     auto out = bt.sigmoid();
     ASSERT_EQ(out.batch_size(), 1000);
@@ -1993,7 +1973,7 @@ TEST(EdgeCaseTest, PipeOperator) {
 
 TEST(EdgeCaseTest, TensorOperatorWithRawTensor) {
     // Tensor + torch::Tensor (raw) should work
-    auto t = Tensor<4>(torch::ones({4}) * 3.0f);
+    auto t = Tensor<4>::ones() * 3.0f;
     auto raw = torch::ones({4}) * 2.0f;
     auto add = t + raw;
     EXPECT_NEAR(add.t().sum().item<float>(), 20.0f, 1e-5f);  // 4*5
@@ -2007,7 +1987,7 @@ TEST(EdgeCaseTest, TensorOperatorWithRawTensor) {
 
 TEST(EdgeCaseTest, TensorScalarOps) {
     // Tensor + float, Tensor - float
-    auto t = Tensor<4>(torch::ones({4}) * 5.0f);
+    auto t = Tensor<4>::ones() * 5.0f;
     auto add = t + 3.0f;
     EXPECT_NEAR(add.t().sum().item<float>(), 32.0f, 1e-5f);  // 4*8
     auto sub = t - 2.0f;
