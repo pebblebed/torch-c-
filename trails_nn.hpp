@@ -116,6 +116,48 @@ public:
 };
 
 /*
+ * Batch-agnostic Conv2d: BatchTensor<InC, H, W> → BatchTensor<OutC, OutH, OutW>.
+ * Works with any batch size at runtime. Forward is templated on spatial dims H, W
+ * so it works with any input spatial size.
+ *
+ * Template params:
+ *   InC      - input channels
+ *   OutC     - output channels
+ *   KH       - kernel height
+ *   KW       - kernel width
+ *   Stride   - stride (default 1)
+ *   Padding  - padding (default 0)
+ *   Dilation - dilation (default 1)
+ *   Groups   - groups (default 1)
+ */
+template<int InC, int OutC, int KH, int KW, int Stride=1, int Padding=0, int Dilation=1, int Groups=1>
+class Conv2d : public torch::nn::Module {
+    torch::nn::Conv2d inner_;
+public:
+    Conv2d()
+    : inner_(torch::nn::Conv2d(torch::nn::Conv2dOptions(InC, OutC, {KH, KW})
+        .stride(Stride).padding(Padding).dilation(Dilation).groups(Groups)))
+    {
+        register_module("conv2d", inner_);
+    }
+
+    template<int H, int W>
+    BatchTensor<
+        OutC,
+        ((H + 2 * Padding - Dilation * (KH - 1) - 1) / Stride + 1),
+        ((W + 2 * Padding - Dilation * (KW - 1) - 1) / Stride + 1)>
+    forward(BatchTensor<InC, H, W> input) {
+        constexpr int OutH = (H + 2 * Padding - Dilation * (KH - 1) - 1) / Stride + 1;
+        constexpr int OutW = (W + 2 * Padding - Dilation * (KW - 1) - 1) / Stride + 1;
+        return BatchTensor<OutC, OutH, OutW>(inner_->forward(input.t()));
+    }
+
+    std::vector<torch::Tensor> parameters() const {
+        return torch::nn::Module::parameters();
+    }
+};
+
+/*
  * LayerNorm: primary variadic template — specializations below for
  * static-batch (2+ params: B, Dims...) and batch-agnostic (1 param: Dim).
  */
