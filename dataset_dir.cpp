@@ -23,7 +23,7 @@ const torch::Tensor make_tensor(const uint8_t* data, size_t size) {
         at::IntArrayRef(shape),
         at::IntArrayRef(strides),
         [](void*){},
-        options).to(torch::kInt32);
+        options).to(torch::kLong);
 }
 
 static inline uint64_t dumb_hash(uint64_t input) {
@@ -33,8 +33,9 @@ static inline uint64_t dumb_hash(uint64_t input) {
 Example DatasetFile::get(size_t index) {
     auto offset = dumb_hash(index) % (file.size - n_ctx);
     auto data = file.data + offset;
+    // Next-token prediction: x = tokens[0..n_ctx-2], y = tokens[1..n_ctx-1]
     torch::Tensor x = make_tensor(data, n_ctx - 1);
-    torch::Tensor y = make_tensor(data + n_ctx, 1);
+    torch::Tensor y = make_tensor(data + 1, n_ctx - 1);
     return Example(x, y);
 }
 

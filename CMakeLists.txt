@@ -1,5 +1,16 @@
 cmake_minimum_required(VERSION 3.25 FATAL_ERROR)
-list(APPEND CMAKE_PREFIX_PATH /home/ubuntu/.local/lib/python3.11/site-packages/torch/share/cmake)
+
+# Auto-detect PyTorch cmake path if not provided via -DCMAKE_PREFIX_PATH
+execute_process(
+    COMMAND python3 -c "import torch; print(torch.utils.cmake_prefix_path)"
+    OUTPUT_VARIABLE TORCH_CMAKE_PATH
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    RESULT_VARIABLE TORCH_CMAKE_RESULT
+)
+if(TORCH_CMAKE_RESULT EQUAL 0 AND TORCH_CMAKE_PATH)
+    list(APPEND CMAKE_PREFIX_PATH "${TORCH_CMAKE_PATH}")
+endif()
+
 project(charformer)
 
 set(CMAKE_CXX_STANDARD 20)
