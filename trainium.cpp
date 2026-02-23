@@ -2,7 +2,7 @@
 #include "charformer.hpp"
 #include "dataset_dir.hpp"
 #include "util.hpp"
-#include "trails.hpp"
+#include "trails/trails.hpp"
 
 using namespace trainium;
 using namespace trails;

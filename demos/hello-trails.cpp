@@ -1,6 +1,6 @@
 #include <iostream>
 #include <torch/torch.h>
-#include "trails.hpp"
+#include "trails/trails.hpp"
 
 using namespace trails;
 

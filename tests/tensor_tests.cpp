@@ -1,8 +1,8 @@
 #include <gtest/gtest.h>
 #include <torch/torch.h>
 #include <sstream>
-#include "../trails.hpp"
-#include "../trails_nn.hpp"
+#include "trails/trails.hpp"
+#include "trails/trails_nn.hpp"
 
 using namespace trails;
 using namespace trails::detail;

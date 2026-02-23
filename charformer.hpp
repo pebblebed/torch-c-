@@ -3,8 +3,8 @@
 #include <cassert>
 #include <string>
 #include <torch/torch.h>
-#include "trails.hpp"
-#include "trails_nn.hpp"
+#include "trails/trails.hpp"
+#include "trails/trails_nn.hpp"
 
 namespace trainium {
 

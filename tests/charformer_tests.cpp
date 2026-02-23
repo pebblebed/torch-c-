@@ -3,7 +3,7 @@
 #include <cmath>
 
 #include "../charformer.hpp"
-#include "../trails_nn.hpp"
+#include "trails/trails_nn.hpp"
 
 using namespace trainium;
 
