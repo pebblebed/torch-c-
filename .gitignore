@@ -38,3 +38,8 @@ build/*
 
 .vscode/*
 .venv/*
+
+# Meson subprojects (downloaded at build time)
+subprojects/googletest-*/
+subprojects/packagecache/
+builddir/
