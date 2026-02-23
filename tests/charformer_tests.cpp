@@ -32,7 +32,7 @@ TEST(CharformerTests, RMSNorm) {
     auto norm = RMSNorm<D>();
     auto x = trails::BatchTensor<D>(torch::randn({B, D}));
     auto y = norm.forward(x);
-    auto scale = ::sqrt((x.t() * x.t()).mean().item<float>());
+    auto scale = ::sqrt((x.t() * x.t()).mean().item<float>() + 1e-6f);
     auto expected_t = x.t() / scale;
     auto max_err = (y.t() - expected_t).abs().max().item<float>();
     std::cerr << "x: " << x << "; scale: " << scale << std::endl;
