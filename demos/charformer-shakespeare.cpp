@@ -15,7 +15,7 @@
 
 #include <torch/torch.h>
 #include "charformer.hpp"
-#include "trails.hpp"
+#include "trails/trails.hpp"
 
 using namespace trainium;
 using namespace trails;
