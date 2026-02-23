@@ -1,0 +1,10 @@
+prefix=@CMAKE_INSTALL_PREFIX@
+includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
+
+Name: trails
+Description: Compile-time tensor shape checking for LibTorch
+Version: @PROJECT_VERSION@
+URL: https://github.com/pebblebed/torch-c-
+Cflags: -I${includedir} -std=c++20
+Requires: torch
+
