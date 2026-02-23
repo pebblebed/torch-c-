@@ -2262,3 +2262,88 @@ TEST(BatchTensorOpsTest, StaticOnes) {
     ASSERT_EQ(bt.t().size(1), 4);
     EXPECT_NEAR(bt.t().sum().item<float>(), 12.0f, 1e-5f);  // 3*4*1
 }
+
+TEST(BatchTensorOpsTest, Cuda) {
+    // cuda() should not crash on CPU — it may throw or silently no-op
+    // depending on CUDA availability. We just ensure it doesn't segfault.
+    auto bt = Tensor<3, 4>::ones().unbatch();
+    if (torch::cuda::is_available()) {
+        auto cuda_bt = bt.cuda();
+        ASSERT_EQ(cuda_bt.batch_size(), 3);
+        ASSERT_EQ(cuda_bt.t().size(1), 4);
+    } else {
+        // On CPU-only builds, cuda() throws — that's acceptable
+        GTEST_SKIP() << "CUDA not available, skipping cuda() test";
+    }
+}
+
+// ============================================================
+// Batch-agnostic RNN/LSTM/GRU: different batch sizes
+// ============================================================
+
+TEST(BatchAgnosticTest, RNN_DifferentBatchSizes) {
+    // Same model instance, different batch sizes at forward time
+    trails::nn::RNN<10, 20, 1> rnn;
+    for (int bs : {1, 3, 7}) {
+        auto x = BatchTensor<5, 10>(torch::randn({bs, 5, 10}));
+        auto [output, h_n] = rnn.forward<5>(x);
+        ASSERT_EQ(output.batch_size(), bs);
+        ASSERT_EQ(output.t().size(1), 5);
+        ASSERT_EQ(output.t().size(2), 20);
+        ASSERT_EQ(h_n.sizes(), (std::vector<int64_t>{1, bs, 20}));
+    }
+}
+
+TEST(BatchAgnosticTest, LSTM_DifferentBatchSizes) {
+    trails::nn::LSTM<10, 20, 1> lstm;
+    for (int bs : {1, 4, 8}) {
+        auto x = BatchTensor<5, 10>(torch::randn({bs, 5, 10}));
+        auto [output, h_n, c_n] = lstm.forward<5>(x);
+        ASSERT_EQ(output.batch_size(), bs);
+        ASSERT_EQ(output.t().size(1), 5);
+        ASSERT_EQ(output.t().size(2), 20);
+        ASSERT_EQ(h_n.sizes(), (std::vector<int64_t>{1, bs, 20}));
+        ASSERT_EQ(c_n.sizes(), (std::vector<int64_t>{1, bs, 20}));
+    }
+}
+
+TEST(BatchAgnosticTest, GRU_DifferentBatchSizes) {
+    trails::nn::GRU<10, 20, 1> gru;
+    for (int bs : {1, 2, 6}) {
+        auto x = BatchTensor<5, 10>(torch::randn({bs, 5, 10}));
+        auto [output, h_n] = gru.forward<5>(x);
+        ASSERT_EQ(output.batch_size(), bs);
+        ASSERT_EQ(output.t().size(1), 5);
+        ASSERT_EQ(output.t().size(2), 20);
+        ASSERT_EQ(h_n.sizes(), (std::vector<int64_t>{1, bs, 20}));
+    }
+}
+
+// ============================================================
+// Batch-agnostic BatchNorm: different batch sizes
+// ============================================================
+
+TEST(BatchAgnosticTest, BatchNorm1d_DifferentBatchSizes) {
+    trails::nn::BatchNorm1d<3> bn;
+    bn.eval();  // eval mode for deterministic behavior
+    for (int bs : {2, 5, 10}) {
+        auto x = BatchTensor<3, 4>(torch::randn({bs, 3, 4}));
+        auto y = bn.forward<4>(x);
+        ASSERT_EQ(y.batch_size(), bs);
+        ASSERT_EQ(y.t().size(1), 3);
+        ASSERT_EQ(y.t().size(2), 4);
+    }
+}
+
+TEST(BatchAgnosticTest, BatchNorm2d_DifferentBatchSizes) {
+    trails::nn::BatchNorm2d<3> bn;
+    bn.eval();  // eval mode for deterministic behavior
+    for (int bs : {2, 4, 8}) {
+        auto x = BatchTensor<3, 4, 5>(torch::randn({bs, 3, 4, 5}));
+        auto y = bn.forward<4, 5>(x);
+        ASSERT_EQ(y.batch_size(), bs);
+        ASSERT_EQ(y.t().size(1), 3);
+        ASSERT_EQ(y.t().size(2), 4);
+        ASSERT_EQ(y.t().size(3), 5);
+    }
+}
