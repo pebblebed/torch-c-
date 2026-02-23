@@ -534,6 +534,8 @@ struct BatchTensor {
     // Scalar ops
     BatchTensor operator*(float s) const { return { t_ * s }; }
     BatchTensor operator/(float s) const { return { t_ / s }; }
+    BatchTensor operator+(float s) const { return { t_ + s }; }
+    BatchTensor operator-(float s) const { return { t_ - s }; }
 
     // Elementwise math (shape-preserving)
     BatchTensor exp() const { return { t_.exp() }; }
@@ -549,6 +551,37 @@ struct BatchTensor {
         using new_seq = typename detail::swap_dims<seq_t, D1, D2>::type;
         using result_t = typename detail::seq_to_batch_tensor<new_seq>::type;
         return result_t{ t_.transpose(D1 + 1, D2 + 1) };
+    }
+
+    // Shape-preserving unary ops
+    BatchTensor rsqrt() const { return { t_.rsqrt() }; }
+    BatchTensor square() const { return { t_ * t_ }; }
+    BatchTensor abs() const { return { t_.abs() }; }
+    BatchTensor cuda() const { return { t_.cuda() }; }
+
+    // Utility methods
+    std::string str() const {
+        std::stringstream ss;
+        ss << t_;
+        return ss.str();
+    }
+
+    template<typename T=float>
+    const T* data_ptr() const { return t_.data_ptr<T>(); }
+
+    // Reduction methods (reduce entire tensor to scalar)
+    Tensor<> mean() const { return { t_.mean() }; }
+    Tensor<> max() const { return { t_.max() }; }
+
+    // Static factory methods with runtime batch size
+    static BatchTensor randn(int batch_size) {
+        return { torch::randn({batch_size, Dims...}) };
+    }
+    static BatchTensor zeroes(int batch_size) {
+        return { torch::zeros({batch_size, Dims...}) };
+    }
+    static BatchTensor ones(int batch_size) {
+        return { torch::ones({batch_size, Dims...}) };
     }
 
     friend std::ostream& operator<<(std::ostream& os, const BatchTensor& bt) {
@@ -570,6 +603,24 @@ BatchTensor<Dims...> unbatch(Tensor<B, Dims...> t) {
 template<int ...Dims>
 BatchTensor<Dims...> operator*(float s, BatchTensor<Dims...> bt) {
     return { bt.t() * s };
+}
+
+// Scalar + BatchTensor
+template<int ...Dims>
+BatchTensor<Dims...> operator+(float s, BatchTensor<Dims...> bt) {
+    return { s + bt.t() };
+}
+
+// Scalar - BatchTensor
+template<int ...Dims>
+BatchTensor<Dims...> operator-(float s, BatchTensor<Dims...> bt) {
+    return { s - bt.t() };
+}
+
+// Scalar / BatchTensor
+template<int ...Dims>
+BatchTensor<Dims...> operator/(float s, BatchTensor<Dims...> bt) {
+    return { s / bt.t() };
 }
 
 // Broadcasting operators: BatchTensor op Tensor (broadcast static tensor over batch)
