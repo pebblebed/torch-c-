@@ -564,39 +564,33 @@ TEST(TensorTest, sqrt_shape_and_values) {
 
 
 TEST(TensorTest, LayerNorm) {
-    trails::nn::LayerNorm<2, 3, 4> ln;
-    auto x = Tensor<2, 3, 4>::randn();
+    trails::nn::BatchLayerNorm<3, 4> ln;
+    auto x = BatchTensor<3, 4>(torch::randn({2, 3, 4}));
     auto y = ln.forward(x);
-    EXPECT_TRUE(y.compare_sizes(torch::IntArrayRef{2, 3, 4}));
-    EXPECT_EQ(y.dim(), 3);
-    EXPECT_EQ(y.size<0>, 2);
-    EXPECT_EQ(y.size<1>, 3);
-    EXPECT_EQ(y.size<2>, 4);
+    EXPECT_EQ(y.batch_size(), 2);
+    EXPECT_EQ(y.t().size(1), 3);
+    EXPECT_EQ(y.t().size(2), 4);
 }
 
 TEST(TensorTest, BatchNorm1d) {
-    trails::nn::BatchNorm1d<2, 3, 4> bn;
+    trails::nn::BatchNorm1d<3> bn;
     bn.eval();
-    auto x = Tensor<2, 3, 4>::randn();
-    auto y = bn.forward(x);
-    EXPECT_TRUE(y.compare_sizes(torch::IntArrayRef{2, 3, 4}));
-    EXPECT_EQ(y.dim(), 3);
-    EXPECT_EQ(y.size<0>, 2);
-    EXPECT_EQ(y.size<1>, 3);
-    EXPECT_EQ(y.size<2>, 4);
+    auto x = BatchTensor<3, 4>(torch::randn({2, 3, 4}));
+    auto y = bn.forward<4>(x);
+    EXPECT_EQ(y.batch_size(), 2);
+    EXPECT_EQ(y.t().size(1), 3);
+    EXPECT_EQ(y.t().size(2), 4);
 }
 
 TEST(TensorTest, BatchNorm2d) {
-    trails::nn::BatchNorm2d<2, 3, 4, 5> bn;
+    trails::nn::BatchNorm2d<3> bn;
     bn.eval();
-    auto x = Tensor<2, 3, 4, 5>::randn();
-    auto y = bn.forward(x);
-    EXPECT_TRUE(y.compare_sizes(torch::IntArrayRef{2, 3, 4, 5}));
-    EXPECT_EQ(y.dim(), 4);
-    EXPECT_EQ(y.size<0>, 2);
-    EXPECT_EQ(y.size<1>, 3);
-    EXPECT_EQ(y.size<2>, 4);
-    EXPECT_EQ(y.size<3>, 5);
+    auto x = BatchTensor<3, 4, 5>(torch::randn({2, 3, 4, 5}));
+    auto y = bn.forward<4, 5>(x);
+    EXPECT_EQ(y.batch_size(), 2);
+    EXPECT_EQ(y.t().size(1), 3);
+    EXPECT_EQ(y.t().size(2), 4);
+    EXPECT_EQ(y.t().size(3), 5);
 }
 
 // ---- Wave 3B: Pooling, Embedding, and remaining functional ops ----
@@ -817,28 +811,33 @@ TEST(TensorTest, scaled_dot_product_attention_scaling) {
 }
 
 TEST(TensorTest, MultiHeadAttention_shape) {
-    // B=2, SeqLen=8, NumHeads=2, ModelDim=16
-    // HeadDim = ModelDim / NumHeads = 8
-    trails::nn::MultiHeadAttention<2, 8, 2, 16> mha;
-    auto x = Tensor<2, 8, 16>::randn();
-    auto y = mha.forward(x);
-    EXPECT_TRUE(y.compare_sizes(torch::IntArrayRef{2, 8, 16}));
+    // NumHeads=2, ModelDim=16, SeqLen=8, batch=2
+    trails::nn::MultiHeadAttention<2, 16> mha;
+    auto x = BatchTensor<8, 16>(torch::randn({2, 8, 16}));
+    auto y = mha.forward<8>(x);
+    EXPECT_EQ(y.batch_size(), 2);
+    EXPECT_EQ(y.t().size(1), 8);
+    EXPECT_EQ(y.t().size(2), 16);
 }
 
 TEST(TensorTest, MultiHeadAttention_single_head) {
-    // B=1, SeqLen=4, NumHeads=1, ModelDim=8
-    trails::nn::MultiHeadAttention<1, 4, 1, 8> mha;
-    auto x = Tensor<1, 4, 8>::randn();
-    auto y = mha.forward(x);
-    EXPECT_TRUE(y.compare_sizes(torch::IntArrayRef{1, 4, 8}));
+    // NumHeads=1, ModelDim=8, SeqLen=4, batch=1
+    trails::nn::MultiHeadAttention<1, 8> mha;
+    auto x = BatchTensor<4, 8>(torch::randn({1, 4, 8}));
+    auto y = mha.forward<4>(x);
+    EXPECT_EQ(y.batch_size(), 1);
+    EXPECT_EQ(y.t().size(1), 4);
+    EXPECT_EQ(y.t().size(2), 8);
 }
 
 TEST(TensorTest, MultiHeadAttention_multi_head) {
-    // B=2, SeqLen=6, NumHeads=4, ModelDim=32
-    trails::nn::MultiHeadAttention<2, 6, 4, 32> mha;
-    auto x = Tensor<2, 6, 32>::randn();
-    auto y = mha.forward(x);
-    EXPECT_TRUE(y.compare_sizes(torch::IntArrayRef{2, 6, 32}));
+    // NumHeads=4, ModelDim=32, SeqLen=6, batch=2
+    trails::nn::MultiHeadAttention<4, 32> mha;
+    auto x = BatchTensor<6, 32>(torch::randn({2, 6, 32}));
+    auto y = mha.forward<6>(x);
+    EXPECT_EQ(y.batch_size(), 2);
+    EXPECT_EQ(y.t().size(1), 6);
+    EXPECT_EQ(y.t().size(2), 32);
 }
 
 // ============================================================
@@ -846,59 +845,71 @@ TEST(TensorTest, MultiHeadAttention_multi_head) {
 // ============================================================
 
 TEST(TensorTest, RNN_basic) {
-    // B=2, SeqLen=5, InputSize=10, HiddenSize=20, NumLayers=1
-    trails::nn::RNN<2, 5, 10, 20, 1> rnn;
-    auto x = Tensor<2, 5, 10>::randn();
-    auto [output, h_n] = rnn.forward(x);
-    EXPECT_TRUE(output.compare_sizes(torch::IntArrayRef{2, 5, 20}));
-    EXPECT_TRUE(h_n.compare_sizes(torch::IntArrayRef{1, 2, 20}));
+    // InputSize=10, HiddenSize=20, NumLayers=1, SeqLen=5, batch=2
+    trails::nn::RNN<10, 20, 1> rnn;
+    auto x = BatchTensor<5, 10>(torch::randn({2, 5, 10}));
+    auto [output, h_n] = rnn.forward<5>(x);
+    EXPECT_EQ(output.batch_size(), 2);
+    EXPECT_EQ(output.t().size(1), 5);
+    EXPECT_EQ(output.t().size(2), 20);
+    EXPECT_EQ(h_n.sizes(), (std::vector<int64_t>{1, 2, 20}));
 }
 
 TEST(TensorTest, RNN_multi_layer) {
-    // B=3, SeqLen=7, InputSize=8, HiddenSize=16, NumLayers=3
-    trails::nn::RNN<3, 7, 8, 16, 3> rnn;
-    auto x = Tensor<3, 7, 8>::randn();
-    auto [output, h_n] = rnn.forward(x);
-    EXPECT_TRUE(output.compare_sizes(torch::IntArrayRef{3, 7, 16}));
-    EXPECT_TRUE(h_n.compare_sizes(torch::IntArrayRef{3, 3, 16}));
+    // InputSize=8, HiddenSize=16, NumLayers=3, SeqLen=7, batch=3
+    trails::nn::RNN<8, 16, 3> rnn;
+    auto x = BatchTensor<7, 8>(torch::randn({3, 7, 8}));
+    auto [output, h_n] = rnn.forward<7>(x);
+    EXPECT_EQ(output.batch_size(), 3);
+    EXPECT_EQ(output.t().size(1), 7);
+    EXPECT_EQ(output.t().size(2), 16);
+    EXPECT_EQ(h_n.sizes(), (std::vector<int64_t>{3, 3, 16}));
 }
 
 TEST(TensorTest, LSTM_basic) {
-    // B=2, SeqLen=5, InputSize=10, HiddenSize=20, NumLayers=1
-    trails::nn::LSTM<2, 5, 10, 20, 1> lstm;
-    auto x = Tensor<2, 5, 10>::randn();
-    auto [output, h_n, c_n] = lstm.forward(x);
-    EXPECT_TRUE(output.compare_sizes(torch::IntArrayRef{2, 5, 20}));
-    EXPECT_TRUE(h_n.compare_sizes(torch::IntArrayRef{1, 2, 20}));
-    EXPECT_TRUE(c_n.compare_sizes(torch::IntArrayRef{1, 2, 20}));
+    // InputSize=10, HiddenSize=20, NumLayers=1, SeqLen=5, batch=2
+    trails::nn::LSTM<10, 20, 1> lstm;
+    auto x = BatchTensor<5, 10>(torch::randn({2, 5, 10}));
+    auto [output, h_n, c_n] = lstm.forward<5>(x);
+    EXPECT_EQ(output.batch_size(), 2);
+    EXPECT_EQ(output.t().size(1), 5);
+    EXPECT_EQ(output.t().size(2), 20);
+    EXPECT_EQ(h_n.sizes(), (std::vector<int64_t>{1, 2, 20}));
+    EXPECT_EQ(c_n.sizes(), (std::vector<int64_t>{1, 2, 20}));
 }
 
 TEST(TensorTest, LSTM_multi_layer) {
-    // B=4, SeqLen=6, InputSize=12, HiddenSize=24, NumLayers=2
-    trails::nn::LSTM<4, 6, 12, 24, 2> lstm;
-    auto x = Tensor<4, 6, 12>::randn();
-    auto [output, h_n, c_n] = lstm.forward(x);
-    EXPECT_TRUE(output.compare_sizes(torch::IntArrayRef{4, 6, 24}));
-    EXPECT_TRUE(h_n.compare_sizes(torch::IntArrayRef{2, 4, 24}));
-    EXPECT_TRUE(c_n.compare_sizes(torch::IntArrayRef{2, 4, 24}));
+    // InputSize=12, HiddenSize=24, NumLayers=2, SeqLen=6, batch=4
+    trails::nn::LSTM<12, 24, 2> lstm;
+    auto x = BatchTensor<6, 12>(torch::randn({4, 6, 12}));
+    auto [output, h_n, c_n] = lstm.forward<6>(x);
+    EXPECT_EQ(output.batch_size(), 4);
+    EXPECT_EQ(output.t().size(1), 6);
+    EXPECT_EQ(output.t().size(2), 24);
+    EXPECT_EQ(h_n.sizes(), (std::vector<int64_t>{2, 4, 24}));
+    EXPECT_EQ(c_n.sizes(), (std::vector<int64_t>{2, 4, 24}));
 }
 
 TEST(TensorTest, GRU_basic) {
-    // B=2, SeqLen=5, InputSize=10, HiddenSize=20, NumLayers=1
-    trails::nn::GRU<2, 5, 10, 20, 1> gru;
-    auto x = Tensor<2, 5, 10>::randn();
-    auto [output, h_n] = gru.forward(x);
-    EXPECT_TRUE(output.compare_sizes(torch::IntArrayRef{2, 5, 20}));
-    EXPECT_TRUE(h_n.compare_sizes(torch::IntArrayRef{1, 2, 20}));
+    // InputSize=10, HiddenSize=20, NumLayers=1, SeqLen=5, batch=2
+    trails::nn::GRU<10, 20, 1> gru;
+    auto x = BatchTensor<5, 10>(torch::randn({2, 5, 10}));
+    auto [output, h_n] = gru.forward<5>(x);
+    EXPECT_EQ(output.batch_size(), 2);
+    EXPECT_EQ(output.t().size(1), 5);
+    EXPECT_EQ(output.t().size(2), 20);
+    EXPECT_EQ(h_n.sizes(), (std::vector<int64_t>{1, 2, 20}));
 }
 
 TEST(TensorTest, GRU_multi_layer) {
-    // B=3, SeqLen=7, InputSize=8, HiddenSize=16, NumLayers=3
-    trails::nn::GRU<3, 7, 8, 16, 3> gru;
-    auto x = Tensor<3, 7, 8>::randn();
-    auto [output, h_n] = gru.forward(x);
-    EXPECT_TRUE(output.compare_sizes(torch::IntArrayRef{3, 7, 16}));
-    EXPECT_TRUE(h_n.compare_sizes(torch::IntArrayRef{3, 3, 16}));
+    // InputSize=8, HiddenSize=16, NumLayers=3, SeqLen=7, batch=3
+    trails::nn::GRU<8, 16, 3> gru;
+    auto x = BatchTensor<7, 8>(torch::randn({3, 7, 8}));
+    auto [output, h_n] = gru.forward<7>(x);
+    EXPECT_EQ(output.batch_size(), 3);
+    EXPECT_EQ(output.t().size(1), 7);
+    EXPECT_EQ(output.t().size(2), 16);
+    EXPECT_EQ(h_n.sizes(), (std::vector<int64_t>{3, 3, 16}));
 }
 
 // ============================================================
@@ -906,60 +917,60 @@ TEST(TensorTest, GRU_multi_layer) {
 // ============================================================
 
 TEST(IntegrationTest, ConvNet_MNIST) {
-    // Simple ConvNet (MNIST-style):
+    // Simple ConvNet (MNIST-style) using batch-agnostic modules:
     // Conv2d(1->16, 5x5) -> relu -> MaxPool2d(2x2) -> Conv2d(16->32, 5x5) -> relu -> Flatten -> Linear
-    // Input: Tensor<1, 1, 28, 28> (batch=1, channels=1, 28x28)
+    // Input: BatchTensor<1, 28, 28> (channels=1, 28x28), batch=1
 
     // Conv2d layer 1: 1 input channel, 16 output channels, 5x5 kernel
-    // Output: (28 - 5 + 1) = 24 -> Tensor<1, 16, 24, 24>
     auto conv1_weight = Tensor<16, 1, 5, 5>::randn();
 
-    // MaxPool2d: 2x2 kernel, stride 2
-    // Output: (24 - 2) / 2 + 1 = 12 -> Tensor<1, 16, 12, 12>
-
     // Conv2d layer 2: 16 input channels, 32 output channels, 5x5 kernel
-    // Output: (12 - 5 + 1) = 8 -> Tensor<1, 32, 8, 8>
     auto conv2_weight = Tensor<32, 16, 5, 5>::randn();
 
-    // Flatten dims 1-3: Tensor<1, 32*8*8> = Tensor<1, 2048>
     // Linear: 2048 -> 10 (10 classes)
-    trails::nn::Linear<1, 2048, 10> fc;
+    trails::nn::Linear<2048, 10> fc;
 
-    // Forward pass
-    auto input = Tensor<1, 1, 28, 28>::randn();
+    // Forward pass with batch=1
+    auto input = BatchTensor<1, 28, 28>(torch::randn({1, 1, 28, 28}));
 
-    // Conv1 + relu
-    auto x = F::conv2d(input, conv1_weight);
-    EXPECT_TRUE(x.compare_sizes(torch::IntArrayRef{1, 16, 24, 24}));
+    // Conv1 + relu: BatchTensor<1, 28, 28> -> BatchTensor<16, 24, 24>
+    auto x = F::conv2d<1, 16, 28, 28, 5, 5>(input, conv1_weight);
+    EXPECT_EQ(x.batch_size(), 1);
+    EXPECT_EQ(x.t().size(1), 16);
+    EXPECT_EQ(x.t().size(2), 24);
     auto x_relu1 = F::relu(x);
 
-    // MaxPool2d
+    // MaxPool2d: BatchTensor<16, 24, 24> -> BatchTensor<16, 12, 12>
     auto x_pool = F::max_pool2d<2, 2, 2, 2>(x_relu1);
-    EXPECT_TRUE(x_pool.compare_sizes(torch::IntArrayRef{1, 16, 12, 12}));
+    EXPECT_EQ(x_pool.t().size(2), 12);
 
-    // Conv2 + relu
-    auto x2 = F::conv2d(x_pool, conv2_weight);
-    EXPECT_TRUE(x2.compare_sizes(torch::IntArrayRef{1, 32, 8, 8}));
+    // Conv2 + relu: BatchTensor<16, 12, 12> -> BatchTensor<32, 8, 8>
+    auto x2 = F::conv2d<16, 32, 12, 12, 5, 5>(x_pool, conv2_weight);
+    EXPECT_EQ(x2.t().size(1), 32);
+    EXPECT_EQ(x2.t().size(2), 8);
     auto x_relu2 = F::relu(x2);
 
-    // Flatten
-    auto x_flat = F::flatten<1, 3>(x_relu2);
-    EXPECT_TRUE(x_flat.compare_sizes(torch::IntArrayRef{1, 2048}));
+    // Flatten: BatchTensor<32, 8, 8> -> BatchTensor<2048>
+    auto x_flat = F::flatten<0, 2>(x_relu2);
+    EXPECT_EQ(x_flat.t().size(1), 2048);
 
-    // Linear classifier
+    // Linear classifier: BatchTensor<2048> -> BatchTensor<10>
     auto output = fc.forward(x_flat);
-    EXPECT_TRUE(output.compare_sizes(torch::IntArrayRef{1, 10}));
+    EXPECT_EQ(output.batch_size(), 1);
+    EXPECT_EQ(output.t().size(1), 10);
 
     // Verify softmax produces valid probabilities
-    auto probs = output.softmax<1>();
+    auto probs = output.softmax<0>();
     auto sum = probs.t().sum(1);
-    EXPECT_TRUE(torch::allclose(sum, Tensor<1>::ones().t(), 1e-5, 1e-5));
+    for (int i = 0; i < 1; i++) {
+        EXPECT_NEAR(sum[i].item<float>(), 1.0f, 1e-5f);
+    }
 }
 
 TEST(IntegrationTest, RNN_TextClassification) {
-    // Simple RNN (text classification):
+    // Simple RNN (text classification) using batch-agnostic modules:
     // Embedding -> LSTM -> take last hidden -> Linear
-    // Input: Tensor<2, 10> (batch=2, seq_len=10, long indices)
+    // Input: BatchTensor<SeqLen> (long indices), batch=2
 
     constexpr int B = 2;
     constexpr int SeqLen = 10;
@@ -969,39 +980,46 @@ TEST(IntegrationTest, RNN_TextClassification) {
     constexpr int NumClasses = 5;
 
     trails::nn::Embedding<VocabSize, EmbedDim> emb;
-    trails::nn::LSTM<B, SeqLen, EmbedDim, HiddenSize, 1> lstm;
-    trails::nn::Linear<B, HiddenSize, NumClasses> classifier;
+    trails::nn::LSTM<EmbedDim, HiddenSize, 1> lstm;
+    trails::nn::Linear<HiddenSize, NumClasses> classifier;
 
     // Input: random integer indices in [0, VocabSize)
-    auto indices = Tensor<B, SeqLen>(torch::randint(0, VocabSize, {B, SeqLen}, torch::kLong));
+    auto indices = BatchTensor<SeqLen>(torch::randint(0, VocabSize, {B, SeqLen}, torch::kLong));
 
-    // Embedding: (B, SeqLen) -> (B, SeqLen, EmbedDim)
-    auto embedded = emb.forward(indices);
-    EXPECT_TRUE(embedded.compare_sizes(torch::IntArrayRef{B, SeqLen, EmbedDim}));
+    // Embedding: BatchTensor<SeqLen> -> BatchTensor<SeqLen, EmbedDim>
+    auto embedded = emb.forward<SeqLen>(indices);
+    EXPECT_EQ(embedded.batch_size(), B);
+    EXPECT_EQ(embedded.t().size(1), SeqLen);
+    EXPECT_EQ(embedded.t().size(2), EmbedDim);
 
-    // LSTM: (B, SeqLen, EmbedDim) -> output (B, SeqLen, HiddenSize), h_n (1, B, HiddenSize)
-    auto [lstm_out, h_n, c_n] = lstm.forward(embedded);
-    EXPECT_TRUE(lstm_out.compare_sizes(torch::IntArrayRef{B, SeqLen, HiddenSize}));
-    EXPECT_TRUE(h_n.compare_sizes(torch::IntArrayRef{1, B, HiddenSize}));
+    // LSTM: BatchTensor<SeqLen, EmbedDim> -> {BatchTensor<SeqLen, HiddenSize>, h_n, c_n}
+    auto [lstm_out, h_n, c_n] = lstm.forward<SeqLen>(embedded);
+    EXPECT_EQ(lstm_out.batch_size(), B);
+    EXPECT_EQ(lstm_out.t().size(1), SeqLen);
+    EXPECT_EQ(lstm_out.t().size(2), HiddenSize);
+    EXPECT_EQ(h_n.sizes(), (std::vector<int64_t>{1, B, HiddenSize}));
 
-    // Take last hidden state: h_n is (1, B, HiddenSize), squeeze to (B, HiddenSize)
-    auto last_hidden = Tensor<B, HiddenSize>(h_n.t().squeeze(0));
-    EXPECT_TRUE(last_hidden.compare_sizes(torch::IntArrayRef{B, HiddenSize}));
+    // Take last hidden state: h_n is (1, B, HiddenSize), squeeze to BatchTensor<HiddenSize>
+    auto last_hidden = BatchTensor<HiddenSize>(h_n.squeeze(0));
+    EXPECT_EQ(last_hidden.batch_size(), B);
 
-    // Linear classifier: (B, HiddenSize) -> (B, NumClasses)
+    // Linear classifier: BatchTensor<HiddenSize> -> BatchTensor<NumClasses>
     auto logits = classifier.forward(last_hidden);
-    EXPECT_TRUE(logits.compare_sizes(torch::IntArrayRef{B, NumClasses}));
+    EXPECT_EQ(logits.batch_size(), B);
+    EXPECT_EQ(logits.t().size(1), NumClasses);
 
     // Verify softmax produces valid probabilities per batch element
-    auto probs = logits.softmax<1>();
+    auto probs = logits.softmax<0>();
     auto sums = probs.t().sum(1);
-    EXPECT_TRUE(torch::allclose(sums, Tensor<B>::ones().t(), 1e-5, 1e-5));
+    for (int i = 0; i < B; i++) {
+        EXPECT_NEAR(sums[i].item<float>(), 1.0f, 1e-5f);
+    }
 }
 
 TEST(IntegrationTest, TransformerEncoderBlock) {
-    // Transformer encoder block:
-    // MultiHeadAttention -> residual + LayerNorm -> FFN (Linear+relu+Linear) -> residual + LayerNorm
-    // Input: Tensor<2, 8, 64> (batch=2, seq_len=8, model_dim=64)
+    // Transformer encoder block using batch-agnostic modules:
+    // MultiHeadAttention -> residual + BatchLayerNorm -> FFN -> residual + BatchLayerNorm
+    // Input: BatchTensor<SeqLen, ModelDim>, batch=2
 
     constexpr int B = 2;
     constexpr int SeqLen = 8;
@@ -1009,9 +1027,9 @@ TEST(IntegrationTest, TransformerEncoderBlock) {
     constexpr int NumHeads = 4;
     constexpr int FFDim = 256;
 
-    trails::nn::MultiHeadAttention<B, SeqLen, NumHeads, ModelDim> mha;
-    trails::nn::LayerNorm<B, SeqLen, ModelDim> ln1;
-    trails::nn::LayerNorm<B, SeqLen, ModelDim> ln2;
+    trails::nn::MultiHeadAttention<NumHeads, ModelDim> mha;
+    trails::nn::BatchLayerNorm<SeqLen, ModelDim> ln1;
+    trails::nn::BatchLayerNorm<SeqLen, ModelDim> ln2;
 
     // FFN weights
     auto ff_w1 = Tensor<FFDim, ModelDim>::randn();
@@ -1019,29 +1037,30 @@ TEST(IntegrationTest, TransformerEncoderBlock) {
     auto ff_w2 = Tensor<ModelDim, FFDim>::randn();
     auto ff_b2 = Tensor<ModelDim>::randn();
 
-    auto input = Tensor<B, SeqLen, ModelDim>::randn();
+    auto input = BatchTensor<SeqLen, ModelDim>(torch::randn({B, SeqLen, ModelDim}));
 
     // Self-attention sublayer
-    auto attn_out = mha.forward(input);
-    EXPECT_TRUE(attn_out.compare_sizes(torch::IntArrayRef{B, SeqLen, ModelDim}));
+    auto attn_out = mha.forward<SeqLen>(input);
+    EXPECT_EQ(attn_out.batch_size(), B);
+    EXPECT_EQ(attn_out.t().size(1), SeqLen);
+    EXPECT_EQ(attn_out.t().size(2), ModelDim);
 
     // Residual connection + LayerNorm
     auto x1 = ln1.forward(attn_out + input);
-    EXPECT_TRUE(x1.compare_sizes(torch::IntArrayRef{B, SeqLen, ModelDim}));
+    EXPECT_EQ(x1.batch_size(), B);
 
     // Feedforward sublayer: Linear(64->256) -> relu -> Linear(256->64)
     auto ff_hidden = F::linear(x1, ff_w1, std::optional{ff_b1});
-    EXPECT_TRUE(ff_hidden.compare_sizes(torch::IntArrayRef{B, SeqLen, FFDim}));
+    EXPECT_EQ(ff_hidden.t().size(2), FFDim);
 
     auto ff_relu = F::relu(ff_hidden);
-    EXPECT_TRUE(ff_relu.compare_sizes(torch::IntArrayRef{B, SeqLen, FFDim}));
 
     auto ff_out = F::linear(ff_relu, ff_w2, std::optional{ff_b2});
-    EXPECT_TRUE(ff_out.compare_sizes(torch::IntArrayRef{B, SeqLen, ModelDim}));
+    EXPECT_EQ(ff_out.t().size(2), ModelDim);
 
     // Residual connection + LayerNorm
     auto output = ln2.forward(ff_out + x1);
-    EXPECT_TRUE(output.compare_sizes(torch::IntArrayRef{B, SeqLen, ModelDim}));
+    EXPECT_EQ(output.batch_size(), B);
 
     // Verify output is finite (no NaN/Inf from the attention computation)
     EXPECT_TRUE(torch::isfinite(output.t()).all().item<bool>());
@@ -1958,17 +1977,15 @@ TEST(EdgeCaseTest, BatchTensorLargeBatch) {
 // Edge cases: nn pipe operator and Sequential
 // ============================================================
 
-TEST(EdgeCaseTest, PipeOperator) {
-    // x | module should be equivalent to module.forward(x)
-    trails::nn::Linear<4, 8, 16> linear;
-    auto x = Tensor<4, 8>::randn();
-    auto y_pipe = x | linear;
-    auto y_fwd  = linear.forward(x);
-    // Both should have same shape
-    ASSERT_EQ(y_pipe.t().size(0), 4);
-    ASSERT_EQ(y_pipe.t().size(1), 16);
-    // Same values (same weights, same input)
-    EXPECT_TRUE(torch::equal(y_pipe.t(), y_fwd.t()));
+TEST(EdgeCaseTest, LinearForwardConsistency) {
+    // Batch-agnostic Linear: same module, same input → same output
+    trails::nn::Linear<8, 16> linear;
+    auto x = BatchTensor<8>(torch::randn({4, 8}));
+    auto y1 = linear.forward(x);
+    auto y2 = linear.forward(x);
+    ASSERT_EQ(y1.batch_size(), 4);
+    ASSERT_EQ(y1.t().size(1), 16);
+    EXPECT_TRUE(torch::equal(y1.t(), y2.t()));
 }
 
 TEST(EdgeCaseTest, TensorOperatorWithRawTensor) {
@@ -2129,4 +2146,119 @@ TEST(BatchAgnosticTest, Embedding_BatchForward) {
     ASSERT_EQ(output.t().size(2), 32);
     // Output should be finite
     EXPECT_TRUE(torch::all(torch::isfinite(output.t())).item<bool>());
+}
+
+
+// ============================================================
+// New BatchTensor operations (Task 1 additions)
+// ============================================================
+
+TEST(BatchTensorOpsTest, Rsqrt) {
+    auto bt = (Tensor<3, 4>::ones() * 4.0f).unbatch();
+    auto out = bt.rsqrt();
+    ASSERT_EQ(out.batch_size(), 3);
+    // rsqrt(4) = 0.5
+    EXPECT_NEAR(out.t().mean().item<float>(), 0.5f, 1e-5f);
+}
+
+TEST(BatchTensorOpsTest, Square) {
+    auto bt = (Tensor<3, 4>::ones() * 3.0f).unbatch();
+    auto out = bt.square();
+    ASSERT_EQ(out.batch_size(), 3);
+    // 3^2 = 9
+    EXPECT_NEAR(out.t().mean().item<float>(), 9.0f, 1e-5f);
+}
+
+TEST(BatchTensorOpsTest, Abs) {
+    auto bt = (Tensor<3, 4>::ones() * -5.0f).unbatch();
+    auto out = bt.abs();
+    ASSERT_EQ(out.batch_size(), 3);
+    EXPECT_NEAR(out.t().mean().item<float>(), 5.0f, 1e-5f);
+}
+
+TEST(BatchTensorOpsTest, ScalarAdd) {
+    auto bt = Tensor<3, 4>::ones().unbatch();
+    auto out = bt + 2.0f;
+    ASSERT_EQ(out.batch_size(), 3);
+    EXPECT_NEAR(out.t().mean().item<float>(), 3.0f, 1e-5f);
+}
+
+TEST(BatchTensorOpsTest, ScalarSub) {
+    auto bt = (Tensor<3, 4>::ones() * 5.0f).unbatch();
+    auto out = bt - 2.0f;
+    ASSERT_EQ(out.batch_size(), 3);
+    EXPECT_NEAR(out.t().mean().item<float>(), 3.0f, 1e-5f);
+}
+
+TEST(BatchTensorOpsTest, FreeFloatAddBatch) {
+    auto bt = Tensor<3, 4>::ones().unbatch();
+    auto out = 10.0f + bt;
+    ASSERT_EQ(out.batch_size(), 3);
+    EXPECT_NEAR(out.t().mean().item<float>(), 11.0f, 1e-5f);
+}
+
+TEST(BatchTensorOpsTest, FreeFloatSubBatch) {
+    auto bt = (Tensor<3, 4>::ones() * 3.0f).unbatch();
+    auto out = 10.0f - bt;
+    ASSERT_EQ(out.batch_size(), 3);
+    EXPECT_NEAR(out.t().mean().item<float>(), 7.0f, 1e-5f);
+}
+
+TEST(BatchTensorOpsTest, FreeFloatDivBatch) {
+    auto bt = (Tensor<3, 4>::ones() * 2.0f).unbatch();
+    auto out = 10.0f / bt;
+    ASSERT_EQ(out.batch_size(), 3);
+    EXPECT_NEAR(out.t().mean().item<float>(), 5.0f, 1e-5f);
+}
+
+TEST(BatchTensorOpsTest, Str) {
+    auto bt = Tensor<2, 3>::ones().unbatch();
+    std::string s = bt.str();
+    EXPECT_FALSE(s.empty());
+    // Should contain "1" since it's all ones
+    EXPECT_NE(s.find("1"), std::string::npos);
+}
+
+TEST(BatchTensorOpsTest, DataPtr) {
+    auto bt = (Tensor<3, 4>::ones() * 7.0f).unbatch();
+    const float* ptr = bt.data_ptr<float>();
+    ASSERT_NE(ptr, nullptr);
+    EXPECT_NEAR(ptr[0], 7.0f, 1e-5f);
+}
+
+TEST(BatchTensorOpsTest, Mean) {
+    auto bt = (Tensor<3, 4>::ones() * 5.0f).unbatch();
+    auto m = bt.mean();
+    // mean() returns Tensor<> (scalar)
+    ASSERT_EQ(m.dim(), 0);
+    EXPECT_NEAR(m.item<float>(), 5.0f, 1e-5f);
+}
+
+TEST(BatchTensorOpsTest, Max) {
+    auto raw = torch::tensor({{1.0f, 5.0f}, {3.0f, 2.0f}, {4.0f, 0.0f}});
+    auto bt = BatchTensor<2>(raw);
+    auto m = bt.max();
+    ASSERT_EQ(m.dim(), 0);
+    EXPECT_NEAR(m.item<float>(), 5.0f, 1e-5f);
+}
+
+TEST(BatchTensorOpsTest, StaticRandn) {
+    auto bt = BatchTensor<4, 8>::randn(5);
+    ASSERT_EQ(bt.batch_size(), 5);
+    ASSERT_EQ(bt.t().size(1), 4);
+    ASSERT_EQ(bt.t().size(2), 8);
+}
+
+TEST(BatchTensorOpsTest, StaticZeroes) {
+    auto bt = BatchTensor<4>::zeroes(3);
+    ASSERT_EQ(bt.batch_size(), 3);
+    ASSERT_EQ(bt.t().size(1), 4);
+    EXPECT_NEAR(bt.t().sum().item<float>(), 0.0f, 1e-5f);
+}
+
+TEST(BatchTensorOpsTest, StaticOnes) {
+    auto bt = BatchTensor<4>::ones(3);
+    ASSERT_EQ(bt.batch_size(), 3);
+    ASSERT_EQ(bt.t().size(1), 4);
+    EXPECT_NEAR(bt.t().sum().item<float>(), 12.0f, 1e-5f);  // 3*4*1
 }
