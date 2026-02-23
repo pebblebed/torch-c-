@@ -29,72 +29,69 @@ TEST(CharformerTests, ApplyPosEncoding) {
 TEST(CharformerTests, RMSNorm) {
     constexpr int B = 1;
     constexpr int D = 3;
-    auto norm = RMSNorm<B, D>();
-    auto x = trails::Tensor<B, D>::randn();
+    auto norm = RMSNorm<D>();
+    auto x = trails::BatchTensor<D>(torch::randn({B, D}));
     auto y = norm.forward(x);
-    auto scale = ::sqrt(x.square().mean().item<float>());
-    auto expected = x / scale;
-    auto max_err = (y - expected).abs().max().item<float>();
+    auto scale = ::sqrt((x.t() * x.t()).mean().item<float>());
+    auto expected_t = x.t() / scale;
+    auto max_err = (y.t() - expected_t).abs().max().item<float>();
     std::cerr << "x: " << x << "; scale: " << scale << std::endl;
     std::cerr << "y: " << y << std::endl;
-    std::cerr << "expected: " << expected << std::endl;
-    std::cerr << "diffs: " << (y - expected) << std::endl;
+    std::cerr << "expected: " << expected_t << std::endl;
+    std::cerr << "diffs: " << (y.t() - expected_t) << std::endl;
     // Max error is actually kinda considerable, alas
     EXPECT_LT(max_err, 1e-5f);
 
-    // Weird dims
-    auto newNorm = RMSNorm<2, 3, 4, 7, 11>();
-    auto x2 = torch::randn({2, 3, 4, 7, 11});
+    // Weird dims (batch-agnostic: no B in template)
+    auto newNorm = RMSNorm<3, 4, 7, 11>();
+    auto x2 = trails::BatchTensor<3, 4, 7, 11>(torch::randn({2, 3, 4, 7, 11}));
     auto y2 = newNorm.forward(x2);
-    EXPECT_EQ(y2.dim(), 5);
-    EXPECT_EQ(y2.size<0>, 2);
-    EXPECT_EQ(y2.size<1>, 3);
-    EXPECT_EQ(y2.size<2>, 4);
-    EXPECT_EQ(y2.size<3>, 7);
-    EXPECT_EQ(y2.size<4>, 11);
+    EXPECT_EQ(y2.t().dim(), 5);
+    EXPECT_EQ(y2.batch_size(), 2);
+    EXPECT_EQ(y2.t().size(1), 3);
+    EXPECT_EQ(y2.t().size(2), 4);
+    EXPECT_EQ(y2.t().size(3), 7);
+    EXPECT_EQ(y2.t().size(4), 11);
 }
 
 TEST(CharformerTests, Linear) {
     constexpr int B = 1;
     constexpr int InDim = 64;
     constexpr int OutDim = 32;
-    trails::nn::Linear<B, InDim, OutDim> linear;
-    auto x = torch::randn({B, InDim});
+    trails::nn::Linear<InDim, OutDim> linear;
+    auto x = trails::BatchTensor<InDim>(torch::randn({B, InDim}));
     auto y = linear.forward(x);
-    EXPECT_EQ(y.dim(), 2);
-    EXPECT_EQ(y.size<0>, B);
-    EXPECT_EQ(y.size<1>, OutDim);
+    EXPECT_EQ(y.t().dim(), 2);
+    EXPECT_EQ(y.batch_size(), B);
+    EXPECT_EQ(y.t().size(1), OutDim);
 }
 
 TEST(CharformerTests, ResNorm) {
-    // ResNorm<TensorType, InnerLayerTemplate, Norm> applies:
-    //   norm(layer(x) + x)
-    // where InnerLayer is a template<typename In, typename Out> class.
-    // trainium::Linear matches this signature.
+    // ResNorm<Layer, Norm> applies: norm(layer(x) + x)
+    // Layer and Norm are concrete types that support forward().
     constexpr int B = 1;
     constexpr int D = 64;
-    using TensorType = trails::Tensor<B, D>;
-    ResNorm<TensorType, trainium::Linear, RMSNorm<B, D>> norm;
-    auto x = TensorType::randn();
+    ResNorm<trails::nn::Linear<D, D>, RMSNorm<D>> norm;
+    auto x = trails::BatchTensor<D>(torch::randn({B, D}));
     auto y = norm.forward(x);
-    EXPECT_EQ(y.dim(), 2);
-    EXPECT_EQ(y.size<0>, B);
-    EXPECT_EQ(y.size<1>, D);
+    EXPECT_EQ(y.t().dim(), 2);
+    EXPECT_EQ(y.batch_size(), B);
+    EXPECT_EQ(y.t().size(1), D);
 }
 
 TEST(CharformerTests, SelfAttention) {
-    // Old SelfAttention class is #if 0'd. Use trails::nn::MultiHeadAttention instead.
+    // Use batch-agnostic trails::nn::MultiHeadAttention<NumHeads, ModelDim>
     constexpr int B = 3;
     constexpr int L = 16;  // reduced from 128 for test speed
     constexpr int H = 10;
     constexpr int D = 640; // ModelDim = NumHeads * HeadDim = 10 * 64
-    trails::nn::MultiHeadAttention<B, L, H, D> attn;
-    auto x = trails::Tensor<B, L, D>::randn();
-    auto y = attn.forward(x);
-    EXPECT_EQ(y.dim(), 3);
-    EXPECT_EQ(y.size<0>, B);
-    EXPECT_EQ(y.size<1>, L);
-    EXPECT_EQ(y.size<2>, D);
+    trails::nn::MultiHeadAttention<H, D> attn;
+    auto x = trails::BatchTensor<L, D>(torch::randn({B, L, D}));
+    auto y = attn.forward<L>(x);
+    EXPECT_EQ(y.t().dim(), 3);
+    EXPECT_EQ(y.batch_size(), B);
+    EXPECT_EQ(y.t().size(1), L);
+    EXPECT_EQ(y.t().size(2), D);
 }
 
 TEST(CharformerTests, MultiHeadAttention) {
@@ -103,14 +100,13 @@ TEST(CharformerTests, MultiHeadAttention) {
     constexpr int L = 16;
     constexpr int H = 4;
     constexpr int D = 64;
-    trails::nn::MultiHeadAttention<B, L, H, D> mha;
-    auto x = trails::Tensor<B, L, D>::randn();
-    auto y = mha.forward(x);
-    EXPECT_TRUE(y.compare_sizes(torch::IntArrayRef{B, L, D}));
-    EXPECT_EQ(y.dim(), 3);
-    EXPECT_EQ(y.size<0>, B);
-    EXPECT_EQ(y.size<1>, L);
-    EXPECT_EQ(y.size<2>, D);
+    trails::nn::MultiHeadAttention<H, D> mha;
+    auto x = trails::BatchTensor<L, D>(torch::randn({B, L, D}));
+    auto y = mha.forward<L>(x);
+    EXPECT_EQ(y.t().dim(), 3);
+    EXPECT_EQ(y.batch_size(), B);
+    EXPECT_EQ(y.t().size(1), L);
+    EXPECT_EQ(y.t().size(2), D);
 }
 
 

@@ -12,15 +12,13 @@ namespace nn = torch::nn;
 using namespace trails;
 using namespace trails::nn;
 
-template<
-    int B,
-    int ...Dims>
-class RMSNorm : public Module<Tensor<B, Dims...>, Tensor<B, Dims...>> {
-    Tensor<1, Dims...> gamma;
-    using TensorType = Tensor<B, Dims...>;
+template<int ...Dims>
+class RMSNorm : public torch::nn::Module {
+    torch::Tensor gamma_;
+    using TensorType = BatchTensor<Dims...>;
 public:
     RMSNorm()
-    : gamma(torch::nn::Module::register_parameter("gamma", torch::ones({1, Dims...}))) {}
+    : gamma_(torch::nn::Module::register_parameter("gamma", torch::ones({Dims...}))) {}
 
     TensorType forward(TensorType x) {
         auto xt = x.t();
@@ -31,41 +29,26 @@ public:
         }
         auto variance = (xt * xt).mean(reduce_dims, /*keepdim=*/true);
         auto rms = (variance + 1e-6).rsqrt();
-        return TensorType(xt * rms * gamma.t());
-    }
-};
-
-template<
-    typename InputOutput,
-    template<typename, typename> class InnerLayer,
-    typename Norm=RMSNorm<std::get<0>(InputOutput::size)>>
-class ResNorm : public trails::nn::Module<InputOutput, InputOutput> {
-    using TensorType = InputOutput;
-    InnerLayer<InputOutput, InputOutput> layer;
-    Norm norm;
-public:
-    TensorType forward(TensorType x) {
-        return norm.forward(layer.forward(x) + x);
+        return TensorType(xt * rms * gamma_);
     }
 };
 
 /*
- * Linear layer, assumes batch-first.
+ * ResNorm: residual + normalization wrapper.
+ * Applies: norm(layer(x) + x)
+ * Template params:
+ *   Dims... - the mathematical dimensions of the BatchTensor
+ *   Layer   - a module type whose forward takes and returns BatchTensor<Dims...>
+ *   Norm    - a normalization module (defaults to RMSNorm<Dims...>)
  */
-template <class InTensor, class OutTensor>
-class Linear : public trails::nn::Module<InTensor, OutTensor> {
-    nn::Linear layer;
-    static_assert(2 == InTensor::dim(), "Linear: input must be 2D (B, InDim)");
-    static_assert(2 == OutTensor::dim(), "Linear: output must be 2D (B, OutDim)");
-    constexpr static int in_dims = std::get<1>(InTensor::shape);
-    constexpr static int out_dims = std::get<1>(OutTensor::shape);
-
+template<typename Layer, typename Norm>
+class ResNorm : public torch::nn::Module {
+    Layer layer;
+    Norm norm;
 public:
-    Linear()
-    : layer(in_dims, out_dims) { }
-
-    OutTensor forward(InTensor x) override {
-        return OutTensor(layer->forward(x.t()));
+    template<typename T>
+    T forward(T x) {
+        return norm.forward(layer.forward(x) + x);
     }
 };
 
