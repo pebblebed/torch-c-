@@ -105,6 +105,7 @@ void train(CharFormer<SeqLen, VocabSize, ModelDim, NumHeads, FFDim, NLayers>& mo
            const std::string& text) {
     size_t steps_per_epoch = text.size() / (BatchSize * SeqLen);
     std::mt19937 rng(42);
+    auto device = model.parameters().front().device();
 
     torch::optim::AdamW optimizer(
         model.parameters(),
@@ -122,6 +123,8 @@ void train(CharFormer<SeqLen, VocabSize, ModelDim, NumHeads, FFDim, NLayers>& mo
 
         for (size_t s = 0; s < steps_per_epoch; s++) {
             auto batch = random_batch(text, rng);
+            batch.x = batch.x.to(device);
+            batch.y = batch.y.to(device);
             optimizer.zero_grad();
 
             // Forward pass: BatchTensor<SeqLen> -> BatchTensor<SeqLen, VocabSize>
@@ -173,7 +176,7 @@ std::string generate(CharFormer<SeqLen, VocabSize, ModelDim, NumHeads, FFDim, NL
         for (int j = 0; j < SeqLen; j++) {
             bytes[j] = static_cast<uint8_t>(input_str[j]);
         }
-        auto t = torch::tensor(bytes, torch::kLong).unsqueeze(0);
+        auto t = torch::tensor(bytes, torch::kLong).unsqueeze(0).to(model.parameters().front().device());
         auto input = BatchTensor<SeqLen>(t);
 
         // Forward pass
@@ -207,7 +210,7 @@ int main() {
     std::cout << "📊 Dataset: " << format_number(text.size()) << " characters\n";
 
     // 2. Create model
-    auto model = CharFormer<SeqLen, VocabSize, ModelDim, NumHeads, FFDim, NLayers>();
+    auto model = CharFormer<SeqLen, VocabSize, ModelDim, NumHeads, FFDim, NLayers>().mps();
     size_t n_params = 0;
     for (const auto& p : model.parameters()) n_params += p.numel();
     std::cout << "🧠 Model: " << format_number(n_params) << " parameters\n";
