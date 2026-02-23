@@ -20,6 +20,9 @@ public:
     RMSNorm()
     : gamma_(torch::nn::Module::register_parameter("gamma", torch::ones({Dims...}))) {}
 
+    auto& cuda() { this->to(torch::kCUDA); return *this; }
+    auto& mps() { this->to(torch::kMPS); return *this; }
+
     TensorType forward(TensorType x) {
         auto xt = x.t();
         // Reduce over all non-batch dimensions (1..sizeof...(Dims)), keepdim for broadcasting
@@ -46,6 +49,9 @@ class ResNorm : public torch::nn::Module {
     Layer layer;
     Norm norm;
 public:
+    auto& cuda() { this->to(torch::kCUDA); return *this; }
+    auto& mps() { this->to(torch::kMPS); return *this; }
+
     template<typename T>
     T forward(T x) {
         return norm.forward(layer.forward(x) + x);
@@ -73,6 +79,9 @@ public:
     , w2(torch::nn::Module::register_parameter("w2", Tensor<ModelDim, FFDim>::randn().t()))
     , b2(torch::nn::Module::register_parameter("b2", Tensor<ModelDim>::randn().t()))
     {}
+
+    auto& cuda() { this->to(torch::kCUDA); return *this; }
+    auto& mps() { this->to(torch::kMPS); return *this; }
 
     InputType forward(InputType x) {
         auto h = trails::functional::linear(x, w1, std::optional{b1});
@@ -107,6 +116,9 @@ public:
         register_module("ff", ff);
         register_module("ln2", ln2);
     }
+
+    auto& cuda() { this->to(torch::kCUDA); return *this; }
+    auto& mps() { this->to(torch::kMPS); return *this; }
 
     InputType forward(InputType x) {
         // Self-attention sublayer with residual + LayerNorm
@@ -176,13 +188,16 @@ public:
         }
     }
 
+    auto& cuda() { this->to(torch::kCUDA); return *this; }
+    auto& mps() { this->to(torch::kMPS); return *this; }
+
     OutputType forward(InputType x) {
         // Embedding: BatchTensor<SeqLen> -> BatchTensor<SeqLen, ModelDim>
         auto z = emb->template forward<SeqLen>(x);
 
         // Add sinusoidal positional encoding
         // pe is (SeqLen, ModelDim), unsqueeze(0) -> (1, SeqLen, ModelDim), broadcasts over batch
-        auto pe = positional_encoding(SeqLen, ModelDim);
+        auto pe = positional_encoding(SeqLen, ModelDim).to(z.t().device());
         z = BatchTensor<SeqLen, ModelDim>(z.t() + pe.unsqueeze(0));
 
         // Encoder layers

@@ -284,3 +284,91 @@ TEST(CharformerBatchTests, CharFormer_BatchDynamic) {
     EXPECT_LT(max_err, 1e-4f);
 }
 
+// ============================================================
+// CUDA tests for cuda() method
+// ============================================================
+
+TEST(CudaTests, LinearCuda) {
+    if (!torch::cuda::is_available()) {
+        GTEST_SKIP() << "CUDA not available";
+    }
+    trails::nn::Linear<32, 16> linear;
+    linear.cuda();
+    for (const auto& p : linear.parameters()) {
+        EXPECT_TRUE(p.is_cuda());
+    }
+}
+
+TEST(CudaTests, CharFormerCuda) {
+    if (!torch::cuda::is_available()) {
+        GTEST_SKIP() << "CUDA not available";
+    }
+    CharFormer<8, 256, 32, 2, 64, 2> model;
+    model.cuda();
+    for (const auto& p : model.parameters()) {
+        EXPECT_TRUE(p.is_cuda()) << "Parameter not on CUDA: " << p.sizes();
+    }
+}
+
+TEST(CudaTests, CharFormerCudaForward) {
+    if (!torch::cuda::is_available()) {
+        GTEST_SKIP() << "CUDA not available";
+    }
+    torch::NoGradGuard no_grad;
+    CharFormer<8, 256, 32, 2, 64, 2> model;
+    model.cuda();
+    auto x = trails::BatchTensor<8>(
+        torch::randint(0, 256, {2, 8}, torch::TensorOptions().dtype(torch::kLong).device(torch::kCUDA)));
+    auto y = model.forward(x);
+    EXPECT_TRUE(y.t().is_cuda());
+    EXPECT_EQ(y.batch_size(), 2);
+    EXPECT_EQ(y.t().size(1), 8);
+    EXPECT_EQ(y.t().size(2), 256);
+    EXPECT_TRUE(torch::all(torch::isfinite(y.t())).item<bool>());
+    EXPECT_TRUE(torch::all(y.t() <= 0.0f).item<bool>());
+}
+
+// ============================================================
+// MPS tests for mps() method
+// ============================================================
+
+TEST(MpsTests, LinearMps) {
+    if (!torch::mps::is_available()) {
+        GTEST_SKIP() << "MPS not available";
+    }
+    trails::nn::Linear<32, 16> linear;
+    linear.mps();
+    for (const auto& p : linear.parameters()) {
+        EXPECT_TRUE(p.is_mps());
+    }
+}
+
+TEST(MpsTests, CharFormerMps) {
+    if (!torch::mps::is_available()) {
+        GTEST_SKIP() << "MPS not available";
+    }
+    CharFormer<8, 256, 32, 2, 64, 2> model;
+    model.mps();
+    for (const auto& p : model.parameters()) {
+        EXPECT_TRUE(p.is_mps()) << "Parameter not on MPS: " << p.sizes();
+    }
+}
+
+TEST(MpsTests, CharFormerMpsForward) {
+    if (!torch::mps::is_available()) {
+        GTEST_SKIP() << "MPS not available";
+    }
+    torch::NoGradGuard no_grad;
+    CharFormer<8, 256, 32, 2, 64, 2> model;
+    model.mps();
+    auto x = trails::BatchTensor<8>(
+        torch::randint(0, 256, {2, 8}, torch::TensorOptions().dtype(torch::kLong).device(torch::kMPS)));
+    auto y = model.forward(x);
+    EXPECT_TRUE(y.t().is_mps());
+    EXPECT_EQ(y.batch_size(), 2);
+    EXPECT_EQ(y.t().size(1), 8);
+    EXPECT_EQ(y.t().size(2), 256);
+    EXPECT_TRUE(torch::all(torch::isfinite(y.t().to(torch::kCPU))).item<bool>());
+    EXPECT_TRUE(torch::all(y.t().to(torch::kCPU) <= 0.0f).item<bool>());
+}
+

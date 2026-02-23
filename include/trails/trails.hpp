@@ -284,6 +284,7 @@ struct Tensor {
     }
  
     Tensor cuda() { return { t_.cuda() }; }
+    Tensor mps() { return { t_.to(torch::kMPS) }; }
     template<typename T=float>
     T item() const {
         return t_.item<T>();
@@ -559,6 +560,7 @@ struct BatchTensor {
     BatchTensor square() const { return { t_ * t_ }; }
     BatchTensor abs() const { return { t_.abs() }; }
     BatchTensor cuda() const { return { t_.cuda() }; }
+    BatchTensor mps() const { return { t_.to(torch::kMPS) }; }
 
     // Utility methods
     std::string str() const {

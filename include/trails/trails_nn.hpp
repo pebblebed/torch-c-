@@ -26,6 +26,9 @@ public:
         register_module("linear", inner_);
     }
 
+    auto& cuda() { this->to(torch::kCUDA); return *this; }
+    auto& mps() { this->to(torch::kMPS); return *this; }
+
     BatchTensor<OutDim> forward(BatchTensor<InDim> input) {
         return BatchTensor<OutDim>(inner_->forward(input.t()));
     }
@@ -61,6 +64,9 @@ public:
         register_module("conv2d", inner_);
     }
 
+    auto& cuda() { this->to(torch::kCUDA); return *this; }
+    auto& mps() { this->to(torch::kMPS); return *this; }
+
     template<int H, int W>
     BatchTensor<
         OutC,
@@ -91,6 +97,9 @@ public:
         register_module("layer_norm", inner_);
     }
 
+    auto& cuda() { this->to(torch::kCUDA); return *this; }
+    auto& mps() { this->to(torch::kMPS); return *this; }
+
     BatchTensor<Dim> forward(BatchTensor<Dim> input) {
         return BatchTensor<Dim>(inner_->forward(input.t()));
     }
@@ -119,6 +128,9 @@ public:
         register_module("layer_norm", inner_);
     }
 
+    auto& cuda() { this->to(torch::kCUDA); return *this; }
+    auto& mps() { this->to(torch::kMPS); return *this; }
+
     BatchTensor<Dims...> forward(BatchTensor<Dims...> input) {
         return BatchTensor<Dims...>(inner_->forward(input.t()));
     }
@@ -142,6 +154,9 @@ public:
     {
         register_module("emb", emb);
     }
+
+    auto& cuda() { this->to(torch::kCUDA); return *this; }
+    auto& mps() { this->to(torch::kMPS); return *this; }
 
     // Batch-agnostic forward: BatchTensor<SeqLen> → BatchTensor<SeqLen, EmbedDim>
     template<int SeqLen>
@@ -177,6 +192,9 @@ public:
         register_module("Wv", Wv);
         register_module("Wo", Wo);
     }
+
+    auto& cuda() { this->to(torch::kCUDA); return *this; }
+    auto& mps() { this->to(torch::kMPS); return *this; }
 
     template<int SeqLen>
     BatchTensor<SeqLen, ModelDim> forward(BatchTensor<SeqLen, ModelDim> input) {
@@ -224,6 +242,9 @@ public:
         register_module("batch_norm1d", inner_);
     }
 
+    auto& cuda() { this->to(torch::kCUDA); return *this; }
+    auto& mps() { this->to(torch::kMPS); return *this; }
+
     template<int L>
     BatchTensor<C, L> forward(BatchTensor<C, L> input) {
         return BatchTensor<C, L>(inner_->forward(input.t()));
@@ -249,6 +270,9 @@ public:
     {
         register_module("batch_norm2d", inner_);
     }
+
+    auto& cuda() { this->to(torch::kCUDA); return *this; }
+    auto& mps() { this->to(torch::kMPS); return *this; }
 
     template<int H, int W>
     BatchTensor<C, H, W> forward(BatchTensor<C, H, W> input) {
@@ -277,6 +301,9 @@ public:
     {
         register_module("rnn", rnn_);
     }
+
+    auto& cuda() { this->to(torch::kCUDA); return *this; }
+    auto& mps() { this->to(torch::kMPS); return *this; }
 
     template<int SeqLen>
     std::tuple<BatchTensor<SeqLen, HiddenSize>, torch::Tensor>
@@ -307,6 +334,9 @@ public:
         register_module("lstm", lstm_);
     }
 
+    auto& cuda() { this->to(torch::kCUDA); return *this; }
+    auto& mps() { this->to(torch::kMPS); return *this; }
+
     template<int SeqLen>
     std::tuple<BatchTensor<SeqLen, HiddenSize>, torch::Tensor, torch::Tensor>
     forward(BatchTensor<SeqLen, InputSize> input) {
@@ -336,6 +366,9 @@ public:
     {
         register_module("gru", gru_);
     }
+
+    auto& cuda() { this->to(torch::kCUDA); return *this; }
+    auto& mps() { this->to(torch::kMPS); return *this; }
 
     template<int SeqLen>
     std::tuple<BatchTensor<SeqLen, HiddenSize>, torch::Tensor>
