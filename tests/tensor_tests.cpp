@@ -668,19 +668,19 @@ TEST(TensorTest, avg_pool2d_asymmetric) {
 
 TEST(TensorTest, Embedding_basic) {
     // VocabSize=100, EmbedDim=32
-    // Input: Tensor<2, 5> of integer indices -> Output: Tensor<2, 5, 32>
+    // Input: BatchTensor<5> of integer indices -> Output: BatchTensor<5, 32>
     trails::nn::Embedding<100, 32> emb;
-    auto indices = Tensor<2, 5>(torch::randint(0, 100, {2, 5}, torch::kLong));
-    auto output = emb.forward(indices);
-    EXPECT_TRUE(output.compare_sizes(torch::IntArrayRef{2, 5, 32}));
+    auto indices = BatchTensor<5>(torch::randint(0, 100, {2, 5}, torch::kLong));
+    auto output = emb.forward<5>(indices);
+    EXPECT_TRUE(output.t().sizes() == (std::vector<int64_t>{2, 5, 32}));
 }
 
 TEST(TensorTest, Embedding_single_batch) {
     // VocabSize=10, EmbedDim=4
     trails::nn::Embedding<10, 4> emb;
-    auto indices = Tensor<1, 3>(torch::randint(0, 10, {1, 3}, torch::kLong));
-    auto output = emb.forward(indices);
-    EXPECT_TRUE(output.compare_sizes(torch::IntArrayRef{1, 3, 4}));
+    auto indices = BatchTensor<3>(torch::randint(0, 10, {1, 3}, torch::kLong));
+    auto output = emb.forward<3>(indices);
+    EXPECT_TRUE(output.t().sizes() == (std::vector<int64_t>{1, 3, 4}));
 }
 
 TEST(TensorTest, flatten_all) {

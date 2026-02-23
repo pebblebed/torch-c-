@@ -131,7 +131,7 @@ public:
 /*
  * Embedding: wraps torch::nn::Embedding.
  * Maps integer indices to dense vectors.
- * Input: Tensor<B, SeqLen> (long/int indices) -> Output: Tensor<B, SeqLen, EmbedDim>
+ * Batch-agnostic: BatchTensor<SeqLen> (long/int indices) -> BatchTensor<SeqLen, EmbedDim>
  */
 template<int VocabSize, int EmbedDim>
 class Embedding : public torch::nn::Module {
@@ -141,11 +141,6 @@ public:
     : emb(torch::nn::Embedding(torch::nn::EmbeddingOptions(VocabSize, EmbedDim)))
     {
         register_module("emb", emb);
-    }
-
-    template<int B, int SeqLen>
-    Tensor<B, SeqLen, EmbedDim> forward(Tensor<B, SeqLen> input) {
-        return { emb->forward(input.t()) };
     }
 
     // Batch-agnostic forward: BatchTensor<SeqLen> → BatchTensor<SeqLen, EmbedDim>
