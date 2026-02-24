@@ -844,7 +844,7 @@ template<
     int Length,
     int DictionarySize,
     int EmbeddingDim>
-Tensor<B, EmbeddingDim>
+Tensor<B, Length, EmbeddingDim>
 project(Tensor<B, Length> input, Tensor<DictionarySize, EmbeddingDim> weights) {
     return torch::nn::functional::embedding(input.t(), weights.t());
 }

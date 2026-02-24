@@ -703,6 +703,15 @@ TEST(TensorTest, Embedding_single_batch) {
     EXPECT_TRUE(output.t().sizes() == (std::vector<int64_t>{1, 3, 4}));
 }
 
+TEST(TensorTest, ProjectReturnsSequenceEmbeddings) {
+    auto tokens = Tensor<2, 4>(torch::tensor({{1, 2, 3, 4}, {4, 3, 2, 1}}, torch::kLong));
+    auto weights = Tensor<8, 6>::randn();
+    EXPECT_NO_THROW(({
+        auto out = F::project(tokens, weights);
+        EXPECT_TRUE(out.compare_sizes(torch::IntArrayRef{2, 4, 6}));
+    }));
+}
+
 TEST(TensorTest, flatten_all) {
     // Flatten all dims: Tensor<2, 3, 4> -> Tensor<24>
     auto t = Tensor<2, 3, 4>::arange();
