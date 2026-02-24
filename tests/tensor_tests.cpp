@@ -219,15 +219,23 @@ TEST(TensorTest, reducedims) {
             using K = ReduceDims<T, false, 1, 2>;
             K k;
             static const auto dims = K::dims;
-            EXPECT_EQ(dims, (std::array<int64_t, 1>{17}));
+            EXPECT_EQ(dims, (std::array<int64_t, 2>{1, 2}));
         }
         {
             using K = ReduceDims<T, true, 1, 2>;
             K k;
             static const auto dims = K::dims;
-            EXPECT_EQ(dims, (std::array<int64_t, 3>{17, 1, 1}));
+            EXPECT_EQ(dims, (std::array<int64_t, 2>{1, 2}));
         }
     }
+}
+
+TEST(TensorTest, MeanReduceDimsUsesDimensionIndices) {
+    auto t = Tensor<17, 2, 3>::randn();
+    EXPECT_NO_THROW(({
+        auto m = t.mean<false, 1, 2>();
+        EXPECT_TRUE(m.compare_sizes(torch::IntArrayRef{17}));
+    }));
 }
 
 TEST(TensorTest, set_dim) {

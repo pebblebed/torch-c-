@@ -1153,6 +1153,53 @@ constexpr auto tuple_to_array(const Tuple& t) {
     return tuple_to_array_impl<T>(t, std::make_index_sequence<std::tuple_size_v<Tuple>>{});
 }
 
+template<int64_t Query, int64_t... Dims>
+struct contains_dim : std::bool_constant<((Query == Dims) || ...)> {};
+
+template<int64_t Value, typename Seq>
+struct prepend_sequence;
+
+template<int64_t Value, int64_t... Seq>
+struct prepend_sequence<Value, std::integer_sequence<int64_t, Seq...>> {
+    using type = std::integer_sequence<int64_t, Value, Seq...>;
+};
+
+template<int64_t... Values>
+struct filter_nonnegative_sequence;
+
+template<>
+struct filter_nonnegative_sequence<> {
+    using type = std::integer_sequence<int64_t>;
+};
+
+template<int64_t First, int64_t... Rest>
+struct filter_nonnegative_sequence<First, Rest...> {
+    using tail_t = typename filter_nonnegative_sequence<Rest...>::type;
+    using type = std::conditional_t<
+        (First >= 0),
+        typename prepend_sequence<First, tail_t>::type,
+        tail_t>;
+};
+
+template<typename TensorType, int64_t... reduceDims>
+consteval bool validate_reduce_dims() {
+    constexpr auto ndim = static_cast<int64_t>(TensorType::dim());
+    constexpr bool all_in_range = ((reduceDims >= 0 && reduceDims < ndim) && ...);
+    if constexpr (!all_in_range) {
+        return false;
+    }
+
+    constexpr std::array<int64_t, sizeof...(reduceDims)> dims = {reduceDims...};
+    for (size_t i = 0; i < dims.size(); ++i) {
+        for (size_t j = i + 1; j < dims.size(); ++j) {
+            if (dims[i] == dims[j]) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 // No dims to reduce over and keepdim=false? -> return a Scalar
 template<typename TensorType>
 struct ReduceDims<TensorType, false> {
@@ -1163,93 +1210,71 @@ struct ReduceDims<TensorType, false> {
 // Dims to reduce over but keepdim=false? Drop the selected dims
 template<typename TensorType, int64_t ...reduceDims>
 class ReduceDims<TensorType, false, reduceDims...> {
-    template<size_t I, int64_t Dim, int64_t... Rest>
-    struct DropDim {
-        static constexpr bool should_keep = ((I != Dim) && ... && (I != Rest));
-    };
+    static_assert(validate_reduce_dims<TensorType, reduceDims...>(),
+        "ReduceDims: reduction dimensions must be unique and within bounds");
 
     template<size_t... Is>
     static auto filter_dims(std::index_sequence<Is...>) {
-        return std::integer_sequence<int64_t, 
-            (DropDim<Is, reduceDims...>::should_keep ? TensorType::template size<Is> : 0)...
-        >{};
-    }
-
-    template<int64_t... Filtered>
-    static auto remove_zeros(std::integer_sequence<int64_t, Filtered...>) {
-        return remove_zeros_impl<Filtered...>();
-    }
-
-private:
-    // Helper to recursively filter out zeros from parameter pack
-    template<int64_t First, int64_t... Rest>
-    static auto remove_zeros_impl() {
-        if constexpr (sizeof...(Rest) == 0) {
-            // Base case: single element
-            if constexpr (First != 0) {
-                return std::integer_sequence<int64_t, First>{};
-            } else {
-                return std::integer_sequence<int64_t>{};
-            }
-        } else {
-            // Recursive case: process first element and combine with rest
-            auto rest_filtered = remove_zeros_impl<Rest...>();
-            if constexpr (First != 0) {
-                return prepend_to_sequence<First>(rest_filtered);
-            } else {
-                return rest_filtered;
-            }
-        }
-    }
-
-    // Helper to prepend a value to an integer sequence
-    template<int64_t Value, int64_t... Seq>
-    static auto prepend_to_sequence(std::integer_sequence<int64_t, Seq...>) {
-        return std::integer_sequence<int64_t, Value, Seq...>{};
-    }
-
-    // Specialization for empty sequence
-    static auto remove_zeros_impl() {
-        return std::integer_sequence<int64_t>{};
+        return std::integer_sequence<int64_t,
+            (contains_dim<static_cast<int64_t>(Is), reduceDims...>::value
+                ? -1
+                : static_cast<int64_t>(TensorType::template size<Is>))...>{};
     }
 
 public:
     using filtered_dims = decltype(filter_dims(std::make_index_sequence<TensorType::dim()>{}));
-    using final_dims = decltype(remove_zeros(filtered_dims{}));
+    template<int64_t... Filtered>
+    static auto make_final_dims(std::integer_sequence<int64_t, Filtered...>) {
+        using seq_t = typename filter_nonnegative_sequence<Filtered...>::type;
+        return seq_t{};
+    }
+    using final_dims = decltype(make_final_dims(filtered_dims{}));
+
     template<int64_t... FinalDims>
     static auto make_tensor(std::integer_sequence<int64_t, FinalDims...>) {
-        return Tensor<FinalDims...>{};
+        return Tensor<static_cast<int>(FinalDims)...>{};
     }
 
     using tensor_t = decltype(make_tensor(final_dims{}));
-    constexpr static auto dims_array = tuple_to_array<int64_t>(tensor_t::sizes());
+    constexpr static std::array<int64_t, sizeof...(reduceDims)> dims_array = {reduceDims...};
     constexpr static auto dims = torch::IntArrayRef(dims_array);
 };
 
 // Dims to reduce over but keepdim=true? 1-replace the selected dims
+template<typename TensorType>
+class ReduceDims<TensorType, true> {
+    template<size_t... Is>
+    static auto make_ones(std::index_sequence<Is...>) {
+        return Tensor<((void)Is, 1)...>{};
+    }
+
+public:
+    using tensor_t = decltype(make_ones(std::make_index_sequence<TensorType::dim()>{}));
+    static constexpr auto dims = torch::IntArrayRef{};
+};
+
 template<typename TensorType, int64_t ...reduceDims>
 class ReduceDims<TensorType, true, reduceDims...> {
-    template<size_t I, int64_t Dim, int64_t... Rest>
-    struct OneOutDim {
-        static constexpr bool should_keep = ((I != Dim) && ... && (I != Rest));
-    };
+    static_assert(validate_reduce_dims<TensorType, reduceDims...>(),
+        "ReduceDims: reduction dimensions must be unique and within bounds");
 
     template<size_t... Is>
     static auto filter_dims(std::index_sequence<Is...>) {
-        return std::integer_sequence<int64_t, 
-            (OneOutDim<Is, reduceDims...>::should_keep ? TensorType::template size<Is> : 1)...
-        >{};
+        return std::integer_sequence<int64_t,
+            (contains_dim<static_cast<int64_t>(Is), reduceDims...>::value
+                ? 1
+                : static_cast<int64_t>(TensorType::template size<Is>))...>{};
     }
     using filtered_dims = decltype(filter_dims(std::make_index_sequence<TensorType::dim()>{}));
 
 public:
     template<int64_t... FinalDims>
     static auto make_tensor(std::integer_sequence<int64_t, FinalDims...>) {
-        return Tensor<FinalDims...>{};
+        return Tensor<static_cast<int>(FinalDims)...>{};
     }
 
     using tensor_t = decltype(make_tensor(filtered_dims{}));
-    constexpr static auto dims_array = tuple_to_array<int64_t>(tensor_t::sizes());
+    constexpr static std::array<int64_t, sizeof...(reduceDims)> dims_array = {reduceDims...};
     constexpr static auto dims = torch::IntArrayRef(dims_array);
 };
 
