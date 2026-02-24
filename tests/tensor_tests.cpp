@@ -8,6 +8,14 @@ using namespace trails;
 using namespace trails::detail;
 namespace F = trails::functional;
 
+template<typename BiasTensor>
+concept Conv1dAcceptsChannelBias = requires(
+    Tensor<2, 3, 10> input,
+    Tensor<5, 3, 3> weights,
+    std::optional<BiasTensor> bias) {
+    { F::conv1d(input, weights, bias) } -> std::same_as<Tensor<2, 5, 8>>;
+};
+
 TEST(TensorTests, ValSequence) {
     EXPECT_EQ(val_sequence<double>::length, 0);
     EXPECT_EQ((val_sequence<double, 1.0>::length), 1);
@@ -149,6 +157,10 @@ TEST(TensorTest, conv1d) {
     auto weights = Tensor<OutChannels, InChannels / groups, KernelWidth>::ones();
     auto output = F::conv1d(input, weights);
     EXPECT_TRUE(output.compare_sizes(torch::IntArrayRef{BatchSize, OutChannels, Length - 2}));
+}
+
+TEST(TensorTest, conv1d_accepts_channel_bias) {
+    EXPECT_TRUE((Conv1dAcceptsChannelBias<Tensor<5>>));
 }
 
 TEST(TensorTest, conv2d) {

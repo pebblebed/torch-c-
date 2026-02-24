@@ -757,7 +757,7 @@ Tensor<
     ((length + 2 * padding - dilation * (kernel_size - 1) - 1) / stride + 1)>
 conv1d(Tensor<B, in_channels, length> input,
        Tensor<out_channels, in_channels / groups, kernel_size> weights,
-       std::optional<Tensor<B, out_channels, 1>> bias = std::nullopt) {
+       std::optional<Tensor<out_channels>> bias = std::nullopt) {
     return {
         torch::conv1d(input.t(), weights.t(),
                       bias ? bias->t() : torch::Tensor(),
