@@ -29,7 +29,7 @@ public:
     auto& cuda() { this->to(torch::kCUDA); return *this; }
     auto& mps() { this->to(torch::kMPS); return *this; }
 
-    BatchTensor<OutDim> forward(BatchTensor<InDim> input) {
+    BatchTensor<OutDim> forward(const BatchTensor<InDim>& input) {
         return BatchTensor<OutDim>(inner_->forward(input.t()));
     }
 
@@ -72,7 +72,7 @@ public:
         OutC,
         ((H + 2 * Padding - Dilation * (KH - 1) - 1) / Stride + 1),
         ((W + 2 * Padding - Dilation * (KW - 1) - 1) / Stride + 1)>
-    forward(BatchTensor<InC, H, W> input) {
+    forward(const BatchTensor<InC, H, W>& input) {
         constexpr int OutH = (H + 2 * Padding - Dilation * (KH - 1) - 1) / Stride + 1;
         constexpr int OutW = (W + 2 * Padding - Dilation * (KW - 1) - 1) / Stride + 1;
         return BatchTensor<OutC, OutH, OutW>(inner_->forward(input.t()));
@@ -100,7 +100,7 @@ public:
     auto& cuda() { this->to(torch::kCUDA); return *this; }
     auto& mps() { this->to(torch::kMPS); return *this; }
 
-    BatchTensor<Dim> forward(BatchTensor<Dim> input) {
+    BatchTensor<Dim> forward(const BatchTensor<Dim>& input) {
         return BatchTensor<Dim>(inner_->forward(input.t()));
     }
 
@@ -131,7 +131,7 @@ public:
     auto& cuda() { this->to(torch::kCUDA); return *this; }
     auto& mps() { this->to(torch::kMPS); return *this; }
 
-    BatchTensor<Dims...> forward(BatchTensor<Dims...> input) {
+    BatchTensor<Dims...> forward(const BatchTensor<Dims...>& input) {
         return BatchTensor<Dims...>(inner_->forward(input.t()));
     }
 
@@ -160,7 +160,7 @@ public:
 
     // Batch-agnostic forward: BatchTensor<SeqLen> → BatchTensor<SeqLen, EmbedDim>
     template<int SeqLen>
-    BatchTensor<SeqLen, EmbedDim> forward(BatchTensor<SeqLen> input) {
+    BatchTensor<SeqLen, EmbedDim> forward(const BatchTensor<SeqLen>& input) {
         return BatchTensor<SeqLen, EmbedDim>(emb->forward(input.t()));
     }
 };
@@ -197,7 +197,7 @@ public:
     auto& mps() { this->to(torch::kMPS); return *this; }
 
     template<int SeqLen>
-    BatchTensor<SeqLen, ModelDim> forward(BatchTensor<SeqLen, ModelDim> input) {
+    BatchTensor<SeqLen, ModelDim> forward(const BatchTensor<SeqLen, ModelDim>& input) {
         auto x = input.t();  // (batch_size, SeqLen, ModelDim)
         auto batch_size = input.batch_size();
 
@@ -246,7 +246,7 @@ public:
     auto& mps() { this->to(torch::kMPS); return *this; }
 
     template<int L>
-    BatchTensor<C, L> forward(BatchTensor<C, L> input) {
+    BatchTensor<C, L> forward(const BatchTensor<C, L>& input) {
         return BatchTensor<C, L>(inner_->forward(input.t()));
     }
 
@@ -275,7 +275,7 @@ public:
     auto& mps() { this->to(torch::kMPS); return *this; }
 
     template<int H, int W>
-    BatchTensor<C, H, W> forward(BatchTensor<C, H, W> input) {
+    BatchTensor<C, H, W> forward(const BatchTensor<C, H, W>& input) {
         return BatchTensor<C, H, W>(inner_->forward(input.t()));
     }
 
@@ -307,7 +307,7 @@ public:
 
     template<int SeqLen>
     std::tuple<BatchTensor<SeqLen, HiddenSize>, torch::Tensor>
-    forward(BatchTensor<SeqLen, InputSize> input) {
+    forward(const BatchTensor<SeqLen, InputSize>& input) {
         auto [output, h_n] = rnn_->forward(input.t());
         return { BatchTensor<SeqLen, HiddenSize>{output}, h_n };
     }
@@ -339,7 +339,7 @@ public:
 
     template<int SeqLen>
     std::tuple<BatchTensor<SeqLen, HiddenSize>, torch::Tensor, torch::Tensor>
-    forward(BatchTensor<SeqLen, InputSize> input) {
+    forward(const BatchTensor<SeqLen, InputSize>& input) {
         auto [output, hidden_tuple] = lstm_->forward(input.t());
         auto [h_n, c_n] = hidden_tuple;
         return { BatchTensor<SeqLen, HiddenSize>{output}, h_n, c_n };
@@ -372,7 +372,7 @@ public:
 
     template<int SeqLen>
     std::tuple<BatchTensor<SeqLen, HiddenSize>, torch::Tensor>
-    forward(BatchTensor<SeqLen, InputSize> input) {
+    forward(const BatchTensor<SeqLen, InputSize>& input) {
         auto [output, h_n] = gru_->forward(input.t());
         return { BatchTensor<SeqLen, HiddenSize>{output}, h_n };
     }
@@ -383,4 +383,3 @@ public:
 };
 
 } // namespace trails::nn
-

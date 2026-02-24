@@ -16,6 +16,11 @@ concept Conv1dAcceptsChannelBias = requires(
     { F::conv1d(input, weights, bias) } -> std::same_as<Tensor<2, 5, 8>>;
 };
 
+template<typename Module, typename Output, typename Input>
+concept ForwardTakesConstRef = requires {
+    { static_cast<Output (Module::*)(const Input&)>(&Module::forward) };
+};
+
 TEST(TensorTests, ValSequence) {
     EXPECT_EQ(val_sequence<double>::length, 0);
     EXPECT_EQ((val_sequence<double, 1.0>::length), 1);
@@ -1774,6 +1779,11 @@ TEST(BatchAgnosticTest, LinearBasic) {
     auto out = linear.forward(input);
     ASSERT_EQ(out.batch_size(), 5);
     ASSERT_EQ(out.t().size(1), 8);
+}
+
+TEST(BatchAgnosticTest, ForwardSignaturesUseConstRef) {
+    EXPECT_TRUE((ForwardTakesConstRef<trails::nn::Linear<8, 16>, BatchTensor<16>, BatchTensor<8>>));
+    EXPECT_TRUE((ForwardTakesConstRef<trails::nn::LayerNorm<16>, BatchTensor<16>, BatchTensor<16>>));
 }
 
 TEST(BatchAgnosticTest, LinearDifferentBatchSizes) {
