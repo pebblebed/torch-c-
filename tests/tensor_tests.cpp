@@ -779,6 +779,28 @@ TEST(TensorTest, functional_linear_batched) {
     }
 }
 
+TEST(TensorTest, rms_norm_normalizes_last_dimension) {
+    auto input = Tensor<2, 3>(torch::tensor({{1.0f, 2.0f, 3.0f},
+                                             {2.0f, 3.0f, 4.0f}}));
+    auto output = F::rms_norm(input);
+    auto rms_per_row = torch::sqrt(output.t().square().mean(/*dim=*/1));
+    EXPECT_TRUE(torch::allclose(
+        rms_per_row,
+        torch::ones_like(rms_per_row),
+        /*rtol=*/1e-4,
+        /*atol=*/1e-4));
+}
+
+TEST(TensorTest, rms_norm_applies_gamma) {
+    auto input = Tensor<2, 3>(torch::tensor({{1.0f, 2.0f, 3.0f},
+                                             {2.0f, 3.0f, 4.0f}}));
+    auto gamma = Tensor<2, 3>::ones() * 2.0f;
+    auto no_gamma = F::rms_norm(input);
+    auto with_gamma = F::rms_norm(input, std::optional{gamma});
+    auto diff = (with_gamma.t() - no_gamma.t()).abs().sum().item<float>();
+    EXPECT_GT(diff, 1e-5f);
+}
+
 // ---- Wave 3A: Attention ----
 
 TEST(TensorTest, matmul_batched_4d) {

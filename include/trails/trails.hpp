@@ -832,11 +832,15 @@ TensorType add(TensorType a, TensorType b) {
 
 template<typename TensorType>
 TensorType rms_norm(TensorType input, std::optional<TensorType> gamma = std::nullopt) {
-    auto size = input.t().size();
-    auto flat = input.t().view({input.t().size(0), -1});
-    auto flat_y = input.t() * torch::rsqrt(input.t().square().mean(/*dim=*/0, /*keepdim=*/true) + 1e-6);
-    auto gamma_mul = gamma ? flat_y * gamma : flat_y;
-    return { flat_y.view(size) };
+    auto x = input.t();
+    auto variance = (x.dim() == 0)
+        ? x.square()
+        : x.square().mean(/*dim=*/-1, /*keepdim=*/true);
+    auto y = x * torch::rsqrt(variance + 1e-6);
+    if (gamma.has_value()) {
+        y = y * gamma->t();
+    }
+    return TensorType{y};
 }
 
 template<
