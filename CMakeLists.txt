@@ -74,7 +74,7 @@ if(TRAILS_BUILD_TESTS)
     FetchContent_MakeAvailable(googletest)
     enable_testing()
 
-    add_executable(tensor_tests tests/tensor_tests.cpp)
+    add_executable(tensor_tests tests/tensor_tests.cpp tests/trails_header_smoke.cpp)
     add_executable(charformer_tests tests/charformer_tests.cpp)
     target_link_libraries(tensor_tests gtest_main trails)
     target_link_libraries(charformer_tests gtest_main trails)

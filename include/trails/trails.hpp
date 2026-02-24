@@ -8,9 +8,19 @@
 #pragma once
 
 #include <torch/torch.h>
+#include <array>
+#include <cmath>
+#include <concepts>
+#include <cstdint>
+#include <iostream>
+#include <optional>
+#include <sstream>
+#include <stdexcept>
+#include <string>
 #include <type_traits>
 #include <tuple>
 #include <utility>
+#include <vector>
 #include <cstddef>
 
 namespace trails {
