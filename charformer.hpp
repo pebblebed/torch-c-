@@ -226,4 +226,78 @@ public:
     }
 };
 
+/*
+ * CharRNN: character-level RNN language model.
+ * Embedding + NLayers RNN + linear head + log_softmax.
+ * Same interface as CharFormer: BatchTensor<SeqLen> -> BatchTensor<SeqLen, VocabSize>.
+ */
+template<int SeqLen, int VocabSize, int ModelDim, int NLayers>
+class CharRNN : public torch::nn::Module {
+    using InputType = BatchTensor<SeqLen>;
+    using OutputType = BatchTensor<SeqLen, VocabSize>;
+
+    std::shared_ptr<trails::nn::Embedding<VocabSize, ModelDim>> emb;
+    std::shared_ptr<trails::nn::RNN<ModelDim, ModelDim, NLayers>> rnn;
+    Tensor<VocabSize, ModelDim> head_w;
+    Tensor<VocabSize> head_b;
+
+public:
+    CharRNN()
+    : emb(std::make_shared<trails::nn::Embedding<VocabSize, ModelDim>>())
+    , rnn(std::make_shared<trails::nn::RNN<ModelDim, ModelDim, NLayers>>())
+    , head_w(torch::nn::Module::register_parameter("head_w", Tensor<VocabSize, ModelDim>::randn().t()))
+    , head_b(torch::nn::Module::register_parameter("head_b", Tensor<VocabSize>::randn().t()))
+    {
+        register_module("emb", emb);
+        register_module("rnn", rnn);
+    }
+
+    auto& cuda() { this->to(torch::kCUDA); return *this; }
+    auto& mps() { this->to(torch::kMPS); return *this; }
+
+    OutputType forward(InputType x) {
+        auto z = emb->template forward<SeqLen>(x);
+        auto [output, h_n] = rnn->template forward<SeqLen>(z);
+        auto logits = trails::functional::linear(output, head_w, std::optional{head_b});
+        return logits.template log_softmax<1>();
+    }
+};
+
+/*
+ * CharGRU: character-level GRU language model.
+ * Embedding + NLayers GRU + linear head + log_softmax.
+ * Same interface as CharFormer: BatchTensor<SeqLen> -> BatchTensor<SeqLen, VocabSize>.
+ */
+template<int SeqLen, int VocabSize, int ModelDim, int NLayers>
+class CharGRU : public torch::nn::Module {
+    using InputType = BatchTensor<SeqLen>;
+    using OutputType = BatchTensor<SeqLen, VocabSize>;
+
+    std::shared_ptr<trails::nn::Embedding<VocabSize, ModelDim>> emb;
+    std::shared_ptr<trails::nn::GRU<ModelDim, ModelDim, NLayers>> gru;
+    Tensor<VocabSize, ModelDim> head_w;
+    Tensor<VocabSize> head_b;
+
+public:
+    CharGRU()
+    : emb(std::make_shared<trails::nn::Embedding<VocabSize, ModelDim>>())
+    , gru(std::make_shared<trails::nn::GRU<ModelDim, ModelDim, NLayers>>())
+    , head_w(torch::nn::Module::register_parameter("head_w", Tensor<VocabSize, ModelDim>::randn().t()))
+    , head_b(torch::nn::Module::register_parameter("head_b", Tensor<VocabSize>::randn().t()))
+    {
+        register_module("emb", emb);
+        register_module("gru", gru);
+    }
+
+    auto& cuda() { this->to(torch::kCUDA); return *this; }
+    auto& mps() { this->to(torch::kMPS); return *this; }
+
+    OutputType forward(InputType x) {
+        auto z = emb->template forward<SeqLen>(x);
+        auto [output, h_n] = gru->template forward<SeqLen>(z);
+        auto logits = trails::functional::linear(output, head_w, std::optional{head_b});
+        return logits.template log_softmax<1>();
+    }
+};
+
 }

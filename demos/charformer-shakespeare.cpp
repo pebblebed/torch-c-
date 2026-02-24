@@ -1,6 +1,6 @@
 /* CharFormer — TinyShakespeare Demo
- * Downloads TinyShakespeare, trains a character-level transformer, and generates text.
- * Demonstrates the Trails typed-tensor API with batch-agnostic CharFormer.
+ * Downloads TinyShakespeare, trains a character-level model, and generates text.
+ * Demonstrates the Trails typed-tensor API with batch-agnostic CharFormer/CharRNN/CharGRU.
  */
 #include <iostream>
 #include <fstream>
@@ -28,8 +28,6 @@ constexpr int NumHeads  = 4;
 constexpr int FFDim     = 512;
 constexpr int NLayers   = 4;
 
-constexpr int    BatchSize  = 16;
-constexpr int    NumEpochs  = 3;
 constexpr double LearningRate = 3e-4;
 constexpr float  Temperature  = 0.8f;
 constexpr int    GenLength    = 500;
@@ -82,28 +80,28 @@ struct Batch {
     torch::Tensor y;  // (BatchSize, SeqLen)
 };
 
-Batch random_batch(const std::string& text, std::mt19937& rng) {
+Batch random_batch(const std::string& text, int batch_size, std::mt19937& rng) {
     std::uniform_int_distribution<size_t> dist(0, text.size() - SeqLen - 2);
     std::vector<int64_t> xs, ys;
-    xs.reserve(BatchSize * SeqLen);
-    ys.reserve(BatchSize * SeqLen);
-    for (int b = 0; b < BatchSize; b++) {
+    xs.reserve(batch_size * SeqLen);
+    ys.reserve(batch_size * SeqLen);
+    for (int b = 0; b < batch_size; b++) {
         size_t offset = dist(rng);
         for (int s = 0; s < SeqLen; s++) {
             xs.push_back(static_cast<uint8_t>(text[offset + s]));
             ys.push_back(static_cast<uint8_t>(text[offset + s + 1]));
         }
     }
-    auto xten = torch::tensor(xs, torch::kLong).reshape({BatchSize, SeqLen});
-    auto yten = torch::tensor(ys, torch::kLong).reshape({BatchSize, SeqLen});
+    auto xten = torch::tensor(xs, torch::kLong).reshape({batch_size, SeqLen});
+    auto yten = torch::tensor(ys, torch::kLong).reshape({batch_size, SeqLen});
     return {xten, yten};
 }
 
 // ── Training ─────────────────────────────────────────────────
 
-void train(CharFormer<SeqLen, VocabSize, ModelDim, NumHeads, FFDim, NLayers>& model,
-           const std::string& text) {
-    size_t steps_per_epoch = text.size() / (BatchSize * SeqLen);
+template<typename Model>
+void train(Model& model, const std::string& text, int batch_size, int num_epochs) {
+    size_t steps_per_epoch = text.size() / (batch_size * SeqLen);
     std::mt19937 rng(42);
     auto device = model.parameters().front().device();
 
@@ -112,34 +110,34 @@ void train(CharFormer<SeqLen, VocabSize, ModelDim, NumHeads, FFDim, NLayers>& mo
         torch::optim::AdamWOptions(LearningRate));
 
     std::cout << "\n🏋️  Training (SeqLen=" << SeqLen << ", ModelDim=" << ModelDim
-              << ", " << NumHeads << " heads, " << NLayers << " layers)\n";
+              << ", " << NLayers << " layers)\n";
 
-    for (int epoch = 1; epoch <= NumEpochs; epoch++) {
+    for (int epoch = 1; epoch <= num_epochs; epoch++) {
         auto t0 = std::chrono::steady_clock::now();
         double epoch_loss = 0.0;
         size_t step = 0;
 
-        std::printf("  Epoch %d/%d:\n", epoch, NumEpochs);
+        std::printf("  Epoch %d/%d:\n", epoch, num_epochs);
 
         for (size_t s = 0; s < steps_per_epoch; s++) {
-            auto batch = random_batch(text, rng);
+            auto batch = random_batch(text, batch_size, rng);
             batch.x = batch.x.to(device);
             batch.y = batch.y.to(device);
             optimizer.zero_grad();
 
             // Forward pass: BatchTensor<SeqLen> -> BatchTensor<SeqLen, VocabSize>
-            auto input = Tensor<BatchSize, SeqLen>(batch.x).unbatch();
+            auto input = BatchTensor<SeqLen>(batch.x);
             auto logits = model.forward(input);
 
             // Flatten for cross_entropy: (B*SeqLen, VocabSize) vs (B*SeqLen,)
-            auto logits_flat = logits.t().reshape({BatchSize * SeqLen, VocabSize});
-            auto target_flat = batch.y.reshape({BatchSize * SeqLen});
+            auto logits_flat = logits.t().reshape({-1, VocabSize});
+            auto target_flat = batch.y.reshape({-1});
             auto loss = torch::nn::functional::cross_entropy(logits_flat, target_flat);
 
             loss.backward();
             optimizer.step();
 
-            double lv = loss.item<double>();
+            double lv = loss.template item<double>();
             epoch_loss += lv;
             step++;
 
@@ -157,8 +155,8 @@ void train(CharFormer<SeqLen, VocabSize, ModelDim, NumHeads, FFDim, NLayers>& mo
 
 // ── Text Generation ──────────────────────────────────────────
 
-std::string generate(CharFormer<SeqLen, VocabSize, ModelDim, NumHeads, FFDim, NLayers>& model,
-                     const std::string& seed, int length, float temperature) {
+template<typename Model>
+std::string generate(Model& model, const std::string& seed, int length, float temperature) {
     torch::NoGradGuard no_grad;
     std::string context = seed;
 
@@ -188,7 +186,7 @@ std::string generate(CharFormer<SeqLen, VocabSize, ModelDim, NumHeads, FFDim, NL
         // Temperature-scaled sampling
         last_logits = last_logits / temperature;
         auto probs = torch::softmax(last_logits, 0);
-        auto next_byte = torch::multinomial(probs, 1).item<int64_t>();
+        auto next_byte = torch::multinomial(probs, 1).template item<int64_t>();
 
         context += static_cast<char>(next_byte);
     }
@@ -198,7 +196,67 @@ std::string generate(CharFormer<SeqLen, VocabSize, ModelDim, NumHeads, FFDim, NL
 
 // ── Main ─────────────────────────────────────────────────────
 
-int main() {
+void print_usage(const char* prog) {
+    std::printf(
+        "Usage: %s [OPTIONS]\n"
+        "\n"
+        "Train a character-level model on TinyShakespeare and generate text.\n"
+        "\n"
+        "Options:\n"
+        "  --model MODEL   Model type: transformer, rnn, gru (default: transformer)\n"
+        "  --batchsize N   Training batch size (default: 16)\n"
+        "  --epochs N      Number of training epochs (default: 3)\n"
+        "  --help          Show this help message and exit\n",
+        prog);
+}
+
+int main(int argc, char* argv[]) {
+    int batch_size = 16;
+    int num_epochs = 3;
+    std::string model_type = "transformer";
+
+    for (int i = 1; i < argc; i++) {
+        std::string arg = argv[i];
+        if (arg == "--help" || arg == "-h") {
+            print_usage(argv[0]);
+            return 0;
+        } else if (arg == "--model") {
+            if (i + 1 >= argc) {
+                std::cerr << "Error: --model requires a value\n";
+                return 1;
+            }
+            model_type = argv[++i];
+            if (model_type != "transformer" && model_type != "rnn" && model_type != "gru") {
+                std::cerr << "Error: --model must be one of: transformer, rnn, gru\n";
+                return 1;
+            }
+        } else if (arg == "--batchsize") {
+            if (i + 1 >= argc) {
+                std::cerr << "Error: --batchsize requires a value\n";
+                return 1;
+            }
+            batch_size = std::atoi(argv[++i]);
+            if (batch_size <= 0) {
+                std::cerr << "Error: --batchsize must be a positive integer\n";
+                return 1;
+            }
+        } else if (arg == "--epochs") {
+            if (i + 1 >= argc) {
+                std::cerr << "Error: --epochs requires a value\n";
+                return 1;
+            }
+            num_epochs = std::atoi(argv[++i]);
+            if (num_epochs <= 0) {
+                std::cerr << "Error: --epochs must be a positive integer\n";
+                return 1;
+            }
+        } else {
+            std::cerr << "Error: unknown option '" << arg << "'\n";
+            print_usage(argv[0]);
+            return 1;
+        }
+    }
+
     std::cout << "\n"
               << "╔══════════════════════════════════════════╗\n"
               << "║   CharFormer — TinyShakespeare Demo      ║\n"
@@ -209,24 +267,36 @@ int main() {
     std::string text = read_file(kDataFile);
     std::cout << "📊 Dataset: " << format_number(text.size()) << " characters\n";
 
-    // 2. Create model
-    auto model = CharFormer<SeqLen, VocabSize, ModelDim, NumHeads, FFDim, NLayers>().mps();
-    size_t n_params = 0;
-    for (const auto& p : model.parameters()) n_params += p.numel();
-    std::cout << "🧠 Model: " << format_number(n_params) << " parameters\n";
+    // Common pipeline: create model, report params, train, generate
+    auto run = [&](auto& model) {
+        size_t n_params = 0;
+        for (const auto& p : model.parameters()) n_params += p.numel();
+        std::cout << "🧠 Model (" << model_type << "): " << format_number(n_params) << " parameters\n";
+        std::cout << "⚙️  Config: batch_size=" << batch_size << ", epochs=" << num_epochs << "\n";
 
-    // 3. Train
-    train(model, text);
+        train(model, text, batch_size, num_epochs);
 
-    // 4. Generate
-    std::string seed = "ROMEO:\n";
-    std::cout << "✍️  Generating text (temperature=" << Temperature
-              << ", seed=\"ROMEO:\")\n";
-    std::cout << "────────────────────────────────────────────\n";
-    std::cout << seed;
-    std::string generated = generate(model, seed, GenLength, Temperature);
-    std::cout << generated << "\n";
-    std::cout << "────────────────────────────────────────────\n";
+        std::string seed = "ROMEO:\n";
+        std::cout << "✍️  Generating text (temperature=" << Temperature
+                  << ", seed=\"ROMEO:\")\n";
+        std::cout << "────────────────────────────────────────────\n";
+        std::cout << seed;
+        std::string generated = generate(model, seed, GenLength, Temperature);
+        std::cout << generated << "\n";
+        std::cout << "────────────────────────────────────────────\n";
+    };
+
+    // 2. Create model and run
+    if (model_type == "transformer") {
+        auto model = CharFormer<SeqLen, VocabSize, ModelDim, NumHeads, FFDim, NLayers>().mps();
+        run(model);
+    } else if (model_type == "rnn") {
+        auto model = CharRNN<SeqLen, VocabSize, ModelDim, NLayers>().mps();
+        run(model);
+    } else if (model_type == "gru") {
+        auto model = CharGRU<SeqLen, VocabSize, ModelDim, NLayers>().mps();
+        run(model);
+    }
 
     return 0;
 }
