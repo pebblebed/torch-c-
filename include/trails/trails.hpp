@@ -250,7 +250,7 @@ struct Tensor {
     constexpr static auto shape = seq_t::values;
     constexpr static size_t _numel(std::convertible_to<int> auto... dims) { return (... * static_cast<size_t>(dims)); }
     constexpr static size_t numel() {
-        if constexpr (sizeof...(Dims) == 0) return 0;
+        if constexpr (sizeof...(Dims) == 0) return 1;
         else return _numel(Dims...);
     }
     template<size_t i>
@@ -271,7 +271,8 @@ struct Tensor {
     const T* data_ptr() const { return t_.data_ptr<T>(); }
 
     static Tensor arange(float start=0) {
-        return Tensor(torch::arange(start, static_cast<float>(numel()), 1).view({Dims...}));
+        const float stop = start + static_cast<float>(numel());
+        return Tensor(torch::arange(start, stop, 1).view({Dims...}));
     }
 
     static Tensor randn() {

@@ -1940,7 +1940,7 @@ TEST(EdgeCaseTest, Numel) {
     EXPECT_EQ((Tensor<3, 4>::numel()), 12u);
     EXPECT_EQ((Tensor<2, 3, 5>::numel()), 30u);
     EXPECT_EQ((Tensor<1>::numel()), 1u);
-    EXPECT_EQ((Tensor<>::numel()), 0u);  // scalar: no dimensions → 0
+    EXPECT_EQ((Tensor<>::numel()), 1u);
 }
 
 TEST(EdgeCaseTest, ScalarAlias) {
@@ -2102,12 +2102,17 @@ TEST(ErrorHandlingTest, BatchTensorConstructorWrongDims) {
 }
 
 TEST(ErrorHandlingTest, ArangeNonZeroStart) {
-    // arange(start>0) generates fewer than numel() elements,
-    // causing view to fail — this is a known API limitation.
-    // PyTorch throws c10::Error (not std::runtime_error) from view().
-    EXPECT_ANY_THROW((Tensor<6>::arange(2)));
-    EXPECT_ANY_THROW((Tensor<2, 3>::arange(1)));
-    // start=0 should work fine
+    auto v = Tensor<6>::arange(2);
+    EXPECT_NO_THROW((Tensor<6>::arange(2)));
+    EXPECT_EQ(v.data_ptr<float>()[0], 2.0f);
+    EXPECT_EQ(v.data_ptr<float>()[5], 7.0f);
+
+    auto m = Tensor<2, 3>::arange(1);
+    EXPECT_NO_THROW((Tensor<2, 3>::arange(1)));
+    EXPECT_EQ(m.t().index({0, 0}).item<float>(), 1.0f);
+    EXPECT_EQ(m.t().index({1, 2}).item<float>(), 6.0f);
+
+    // start=0 should still work
     EXPECT_NO_THROW((Tensor<6>::arange(0)));
 }
 
