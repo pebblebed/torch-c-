@@ -679,18 +679,6 @@ Tensor<M, N> matmul(Tensor<M, K> a, Tensor<K, N> b) {
     return Tensor<M, N>{ torch::matmul(a.t(), b.t()) };
 }
 
-// matmul: batched 3D case Tensor<B,M,K> x Tensor<B,K,N> -> Tensor<B,M,N>
-template<int B, int M, int K, int N>
-Tensor<B, M, N> matmul(Tensor<B, M, K> a, Tensor<B, K, N> b) {
-    return Tensor<B, M, N>{ torch::matmul(a.t(), b.t()) };
-}
-
-// matmul: batched 4D case Tensor<B,H,M,K> x Tensor<B,H,K,N> -> Tensor<B,H,M,N>
-template<int B, int H, int M, int K, int N>
-Tensor<B, H, M, N> matmul(Tensor<B, H, M, K> a, Tensor<B, H, K, N> b) {
-    return Tensor<B, H, M, N>{ torch::matmul(a.t(), b.t()) };
-}
-
 // matmul: Weight-sharing: BatchTensor<M,K> x Tensor<K,N> → BatchTensor<M,N>
 template<int M, int K, int N>
 BatchTensor<M, N> matmul(BatchTensor<M, K> a, Tensor<K, N> b) {
@@ -703,24 +691,50 @@ BatchTensor<M, N> matmul(BatchTensor<M, K> a, BatchTensor<K, N> b) {
     return { torch::matmul(a.t(), b.t()) };
 }
 
+// matmul: Per-sample + grouped: BatchTensor<H,M,K> x BatchTensor<H,K,N> → BatchTensor<H,M,N>
+template<int H, int M, int K, int N>
+BatchTensor<H, M, N> matmul(BatchTensor<H, M, K> a, BatchTensor<H, K, N> b) {
+    return { torch::matmul(a.t(), b.t()) };
+}
+
+// Backward-compatible static-batch wrappers.
+template<int B, int M, int K, int N>
+Tensor<B, M, N> matmul(Tensor<B, M, K> a, Tensor<B, K, N> b) {
+    return matmul(a.unbatch(), b.unbatch()).template bind<B>();
+}
+
+template<int B, int H, int M, int K, int N>
+Tensor<B, H, M, N> matmul(Tensor<B, H, M, K> a, Tensor<B, H, K, N> b) {
+    return matmul(a.unbatch(), b.unbatch()).template bind<B>();
+}
+
 // scaled_dot_product_attention:
-//   Q: Tensor<B, H, L, D>  (queries)
-//   K: Tensor<B, H, S, D>  (keys)
-//   V: Tensor<B, H, S, Dv> (values)
-//   -> Tensor<B, H, L, Dv>
+//   Q: BatchTensor<H, L, D>  (queries)
+//   K: BatchTensor<H, S, D>  (keys)
+//   V: BatchTensor<H, S, Dv> (values)
+//   -> BatchTensor<H, L, Dv>
 // Computes: softmax(Q @ K^T / sqrt(D)) @ V
+template<int H, int L, int S, int D, int Dv>
+BatchTensor<H, L, Dv>
+scaled_dot_product_attention(BatchTensor<H, L, D> Q,
+                             BatchTensor<H, S, D> K,
+                             BatchTensor<H, S, Dv> V) {
+    const float scale = 1.0f / std::sqrt(static_cast<float>(D));
+    // Q @ K^T -> (B, H, L, S), where B is runtime batch size.
+    auto scores = matmul(Q, K.template transpose<1, 2>()) * scale;
+    // softmax over the key dimension S (last mathematical dimension)
+    auto weights = scores.template softmax<2>();
+    // weights @ V -> (B, H, L, Dv)
+    return matmul(weights, V);
+}
+
+// Backward-compatible static-batch wrapper.
 template<int B, int H, int L, int S, int D, int Dv>
 Tensor<B, H, L, Dv>
 scaled_dot_product_attention(Tensor<B, H, L, D> Q,
                              Tensor<B, H, S, D> K,
                              Tensor<B, H, S, Dv> V) {
-    const float scale = 1.0f / std::sqrt(static_cast<float>(D));
-    // Q @ K^T -> (B, H, L, S)
-    auto scores = matmul(Q, K.template transpose<2, 3>()) * scale;
-    // softmax over last dim (the S / key dimension)
-    auto weights = scores.template softmax<3>();
-    // weights @ V -> (B, H, L, Dv)
-    return matmul(weights, V);
+    return scaled_dot_product_attention(Q.unbatch(), K.unbatch(), V.unbatch()).template bind<B>();
 }
 
 namespace functional {
@@ -753,7 +767,6 @@ namespace functional {
  * See https://pytorch.org/docs/stable/generated/torch.nn.functional.conv1d.html#torch.nn.functional.conv1d
  */
 template<
-    int B,
     int in_channels,
     int out_channels,
     int length,
@@ -762,11 +775,10 @@ template<
     int stride=1,
     int padding=0,
     int dilation=1>
-Tensor<
-    B,
+BatchTensor<
     out_channels,
     ((length + 2 * padding - dilation * (kernel_size - 1) - 1) / stride + 1)>
-conv1d(Tensor<B, in_channels, length> input,
+conv1d(BatchTensor<in_channels, length> input,
        Tensor<out_channels, in_channels / groups, kernel_size> weights,
        std::optional<Tensor<out_channels>> bias = std::nullopt) {
     return {
@@ -779,36 +791,6 @@ conv1d(Tensor<B, in_channels, length> input,
     };
 }
 
-template<
-    int B,
-    int in_channels,
-    int out_channels,
-    int input_height,
-    int input_width,
-    int kernel_height,
-    int kernel_width,
-    int groups=1,
-    int stride=1,
-    int padding=0,
-    int dilation=1>
-Tensor<
-    B,
-    out_channels,
-    ((input_height + 2 * padding - dilation * (kernel_height - 1) - 1) / stride + 1),
-    ((input_width  + 2 * padding - dilation * (kernel_width  - 1) - 1) / stride + 1)>
-conv2d(Tensor<B, in_channels, input_height, input_width> input,
-       Tensor<out_channels, in_channels / groups, kernel_height, kernel_width> weights,
-       std::optional<Tensor<out_channels>> bias = std::nullopt) {
-    return { torch::conv2d(input.t(), weights.t(),
-                           bias ? bias->t() : torch::Tensor(),
-                           /*stride*/ torch::IntArrayRef{stride},
-                           /*padding*/ torch::IntArrayRef{padding},
-                           /*dilation*/ torch::IntArrayRef{dilation},
-                           /*groups*/ groups)
-    };
-}
-
-// conv2d for BatchTensor: BatchTensor<InC, H, W> + weight Tensor<OutC, InC/G, KH, KW>
 template<
     int in_channels,
     int out_channels,
@@ -836,6 +818,53 @@ conv2d(BatchTensor<in_channels, input_height, input_width> input,
     };
 }
 
+// Backward-compatible static-batch wrappers.
+template<
+    int B,
+    int in_channels,
+    int out_channels,
+    int length,
+    int kernel_size,
+    int groups=1,
+    int stride=1,
+    int padding=0,
+    int dilation=1>
+Tensor<
+    B,
+    out_channels,
+    ((length + 2 * padding - dilation * (kernel_size - 1) - 1) / stride + 1)>
+conv1d(Tensor<B, in_channels, length> input,
+       Tensor<out_channels, in_channels / groups, kernel_size> weights,
+       std::optional<Tensor<out_channels>> bias = std::nullopt) {
+    return conv1d<in_channels, out_channels, length, kernel_size, groups, stride, padding, dilation>(
+        input.unbatch(), weights, bias).template bind<B>();
+}
+
+template<
+    int B,
+    int in_channels,
+    int out_channels,
+    int input_height,
+    int input_width,
+    int kernel_height,
+    int kernel_width,
+    int groups=1,
+    int stride=1,
+    int padding=0,
+    int dilation=1>
+Tensor<
+    B,
+    out_channels,
+    ((input_height + 2 * padding - dilation * (kernel_height - 1) - 1) / stride + 1),
+    ((input_width  + 2 * padding - dilation * (kernel_width  - 1) - 1) / stride + 1)>
+conv2d(Tensor<B, in_channels, input_height, input_width> input,
+       Tensor<out_channels, in_channels / groups, kernel_height, kernel_width> weights,
+       std::optional<Tensor<out_channels>> bias = std::nullopt) {
+    return conv2d<in_channels, out_channels, input_height, input_width,
+                  kernel_height, kernel_width, groups, stride, padding, dilation>(
+        input.unbatch(), weights, bias).template bind<B>();
+}
+
 template<typename TensorType>
 TensorType add(TensorType a, TensorType b) {
     return { a.t() + b.t() };
@@ -855,13 +884,22 @@ TensorType rms_norm(TensorType input, std::optional<TensorType> gamma = std::nul
 }
 
 template<
+    int Length,
+    int DictionarySize,
+    int EmbeddingDim>
+BatchTensor<Length, EmbeddingDim>
+project(BatchTensor<Length> input, Tensor<DictionarySize, EmbeddingDim> weights) {
+    return torch::nn::functional::embedding(input.t(), weights.t());
+}
+
+template<
     int B,
     int Length,
     int DictionarySize,
     int EmbeddingDim>
 Tensor<B, Length, EmbeddingDim>
 project(Tensor<B, Length> input, Tensor<DictionarySize, EmbeddingDim> weights) {
-    return torch::nn::functional::embedding(input.t(), weights.t());
+    return project<Length, DictionarySize, EmbeddingDim>(input.unbatch(), weights).template bind<B>();
 }
 
 // Activation functions (shape-preserving)
@@ -902,16 +940,15 @@ TensorType sqrt(TensorType input) { return input.sqrt(); }
 
 /*
  * max_pool1d: 1D max pooling with compile-time shape propagation.
- * Input: Tensor<B, C, L> -> Output: Tensor<B, C, (L - KernelSize) / Stride + 1>
+ * Input: BatchTensor<C, L> -> Output: BatchTensor<C, (L - KernelSize) / Stride + 1>
  */
 template<
     int KernelSize,
     int Stride,
-    int B,
     int C,
     int L>
-Tensor<B, C, ((L - KernelSize) / Stride + 1)>
-max_pool1d(Tensor<B, C, L> input) {
+BatchTensor<C, ((L - KernelSize) / Stride + 1)>
+max_pool1d(BatchTensor<C, L> input) {
     return { torch::max_pool1d(input.t(),
                                /*kernel_size=*/{KernelSize},
                                /*stride=*/{Stride}) };
@@ -919,25 +956,8 @@ max_pool1d(Tensor<B, C, L> input) {
 
 /*
  * max_pool2d: 2D max pooling with compile-time shape propagation.
- * Input: Tensor<B, C, H, W> -> Output: Tensor<B, C, (H-KH)/SH+1, (W-KW)/SW+1>
+ * Input: BatchTensor<C, H, W> -> Output: BatchTensor<C, (H-KH)/SH+1, (W-KW)/SW+1>
  */
-template<
-    int KernelH,
-    int KernelW,
-    int StrideH,
-    int StrideW,
-    int B,
-    int C,
-    int H,
-    int W>
-Tensor<B, C, ((H - KernelH) / StrideH + 1), ((W - KernelW) / StrideW + 1)>
-max_pool2d(Tensor<B, C, H, W> input) {
-    return { torch::max_pool2d(input.t(),
-                               /*kernel_size=*/{KernelH, KernelW},
-                               /*stride=*/{StrideH, StrideW}) };
-}
-
-// max_pool2d for BatchTensor: BatchTensor<C, H, W> → BatchTensor<C, outH, outW>
 template<
     int KernelH,
     int KernelW,
@@ -953,10 +973,7 @@ max_pool2d(BatchTensor<C, H, W> input) {
                                /*stride=*/{StrideH, StrideW}) };
 }
 
-/*
- * avg_pool1d: 1D average pooling with compile-time shape propagation.
- * Input: Tensor<B, C, L> -> Output: Tensor<B, C, (L - KernelSize) / Stride + 1>
- */
+// Backward-compatible static-batch wrappers.
 template<
     int KernelSize,
     int Stride,
@@ -964,16 +981,10 @@ template<
     int C,
     int L>
 Tensor<B, C, ((L - KernelSize) / Stride + 1)>
-avg_pool1d(Tensor<B, C, L> input) {
-    return { torch::avg_pool1d(input.t(),
-                               /*kernel_size=*/{KernelSize},
-                               /*stride=*/{Stride}) };
+max_pool1d(Tensor<B, C, L> input) {
+    return max_pool1d<KernelSize, Stride, C, L>(input.unbatch()).template bind<B>();
 }
 
-/*
- * avg_pool2d: 2D average pooling with compile-time shape propagation.
- * Input: Tensor<B, C, H, W> -> Output: Tensor<B, C, (H-KH)/SH+1, (W-KW)/SW+1>
- */
 template<
     int KernelH,
     int KernelW,
@@ -984,13 +995,30 @@ template<
     int H,
     int W>
 Tensor<B, C, ((H - KernelH) / StrideH + 1), ((W - KernelW) / StrideW + 1)>
-avg_pool2d(Tensor<B, C, H, W> input) {
-    return { torch::avg_pool2d(input.t(),
-                               /*kernel_size=*/{KernelH, KernelW},
-                               /*stride=*/{StrideH, StrideW}) };
+max_pool2d(Tensor<B, C, H, W> input) {
+    return max_pool2d<KernelH, KernelW, StrideH, StrideW, C, H, W>(input.unbatch()).template bind<B>();
 }
 
-// avg_pool2d for BatchTensor: BatchTensor<C, H, W> → BatchTensor<C, outH, outW>
+/*
+ * avg_pool1d: 1D average pooling with compile-time shape propagation.
+ * Input: BatchTensor<C, L> -> Output: BatchTensor<C, (L - KernelSize) / Stride + 1>
+ */
+template<
+    int KernelSize,
+    int Stride,
+    int C,
+    int L>
+BatchTensor<C, ((L - KernelSize) / Stride + 1)>
+avg_pool1d(BatchTensor<C, L> input) {
+    return { torch::avg_pool1d(input.t(),
+                               /*kernel_size=*/{KernelSize},
+                               /*stride=*/{Stride}) };
+}
+
+/*
+ * avg_pool2d: 2D average pooling with compile-time shape propagation.
+ * Input: BatchTensor<C, H, W> -> Output: BatchTensor<C, (H-KH)/SH+1, (W-KW)/SW+1>
+ */
 template<
     int KernelH,
     int KernelW,
@@ -1004,6 +1032,31 @@ avg_pool2d(BatchTensor<C, H, W> input) {
     return { torch::avg_pool2d(input.t(),
                                /*kernel_size=*/{KernelH, KernelW},
                                /*stride=*/{StrideH, StrideW}) };
+}
+
+template<
+    int KernelSize,
+    int Stride,
+    int B,
+    int C,
+    int L>
+Tensor<B, C, ((L - KernelSize) / Stride + 1)>
+avg_pool1d(Tensor<B, C, L> input) {
+    return avg_pool1d<KernelSize, Stride, C, L>(input.unbatch()).template bind<B>();
+}
+
+template<
+    int KernelH,
+    int KernelW,
+    int StrideH,
+    int StrideW,
+    int B,
+    int C,
+    int H,
+    int W>
+Tensor<B, C, ((H - KernelH) / StrideH + 1), ((W - KernelW) / StrideW + 1)>
+avg_pool2d(Tensor<B, C, H, W> input) {
+    return avg_pool2d<KernelH, KernelW, StrideH, StrideW, C, H, W>(input.unbatch()).template bind<B>();
 }
 
 // ---- Flatten ----
@@ -1088,18 +1141,6 @@ linear(Tensor<M, InDim> input, Tensor<OutDim, InDim> weight,
 }
 
 /*
- * linear: functional linear transformation (batched 3D).
- * Tensor<B, SeqLen, InDim> x Tensor<OutDim, InDim> -> Tensor<B, SeqLen, OutDim>
- */
-template<int B, int SeqLen, int InDim, int OutDim>
-Tensor<B, SeqLen, OutDim>
-linear(Tensor<B, SeqLen, InDim> input, Tensor<OutDim, InDim> weight,
-       std::optional<Tensor<OutDim>> bias = std::nullopt) {
-    return { torch::nn::functional::linear(input.t(), weight.t(),
-             bias ? bias->t() : torch::Tensor()) };
-}
-
-/*
  * linear for BatchTensor: BatchTensor<InDim> x Tensor<OutDim, InDim> → BatchTensor<OutDim>
  */
 template<int InDim, int OutDim>
@@ -1121,7 +1162,23 @@ linear(BatchTensor<SeqLen, InDim> input, Tensor<OutDim, InDim> weight,
              bias ? bias->t() : torch::Tensor()) };
 }
 
+// Backward-compatible static-batch wrapper.
+template<int B, int SeqLen, int InDim, int OutDim>
+Tensor<B, SeqLen, OutDim>
+linear(Tensor<B, SeqLen, InDim> input, Tensor<OutDim, InDim> weight,
+       std::optional<Tensor<OutDim>> bias = std::nullopt) {
+    return linear<SeqLen, InDim, OutDim>(input.unbatch(), weight, bias).template bind<B>();
+}
+
 // scaled_dot_product_attention (forwarding to trails:: free function)
+template<int H, int L, int S, int D, int Dv>
+BatchTensor<H, L, Dv>
+scaled_dot_product_attention(BatchTensor<H, L, D> Q,
+                             BatchTensor<H, S, D> K,
+                             BatchTensor<H, S, Dv> V) {
+    return trails::scaled_dot_product_attention(Q, K, V);
+}
+
 template<int B, int H, int L, int S, int D, int Dv>
 Tensor<B, H, L, Dv>
 scaled_dot_product_attention(Tensor<B, H, L, D> Q,
@@ -1133,17 +1190,6 @@ scaled_dot_product_attention(Tensor<B, H, L, D> Q,
 // ---- Cross-entropy loss ----
 
 /*
- * cross_entropy: static-batch version.
- * Tensor<B,C> logits + Tensor<B> integer labels → scalar torch::Tensor.
- */
-template<int B, int C>
-torch::Tensor cross_entropy(Tensor<B, C> input, Tensor<B> target) {
-    return torch::nn::functional::cross_entropy(
-        input.t(), target.t()
-    );
-}
-
-/*
  * cross_entropy: dynamic-batch (BatchTensor) version.
  * BatchTensor<C> logits + torch::Tensor integer labels → scalar torch::Tensor.
  */
@@ -1152,6 +1198,15 @@ torch::Tensor cross_entropy(BatchTensor<C> input, torch::Tensor target) {
     return torch::nn::functional::cross_entropy(
         input.t(), target
     );
+}
+
+/*
+ * cross_entropy: backward-compatible static-batch wrapper.
+ * Tensor<B,C> logits + Tensor<B> integer labels → scalar torch::Tensor.
+ */
+template<int B, int C>
+torch::Tensor cross_entropy(Tensor<B, C> input, Tensor<B> target) {
+    return cross_entropy<C>(input.unbatch(), target.t());
 }
 
 }

@@ -57,7 +57,7 @@ int main(int argc, char** argv) {
         optimizer.zero_grad();
 
         // Forward pass: input BatchTensor<SeqLen> -> logits BatchTensor<SeqLen, VocabSize>
-        auto input = Tensor<B, SeqLen>(data).unbatch();
+        auto input = BatchTensor<SeqLen>(data);
         auto logits = net.forward(input);
 
         // Reshape for cross_entropy: flatten (batch, SeqLen, VocabSize) -> (batch*SeqLen, VocabSize)
