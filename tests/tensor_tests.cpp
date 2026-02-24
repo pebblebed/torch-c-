@@ -21,6 +21,11 @@ concept ForwardTakesConstRef = requires {
     { static_cast<Output (Module::*)(const Input&)>(&Module::forward) };
 };
 
+template<typename Module>
+concept ExposesRecursiveParameters = requires(const Module& m) {
+    { m.parameters(false) } -> std::same_as<std::vector<torch::Tensor>>;
+};
+
 TEST(TensorTests, ValSequence) {
     EXPECT_EQ(val_sequence<double>::length, 0);
     EXPECT_EQ((val_sequence<double, 1.0>::length), 1);
@@ -1784,6 +1789,11 @@ TEST(BatchAgnosticTest, LinearBasic) {
 TEST(BatchAgnosticTest, ForwardSignaturesUseConstRef) {
     EXPECT_TRUE((ForwardTakesConstRef<trails::nn::Linear<8, 16>, BatchTensor<16>, BatchTensor<8>>));
     EXPECT_TRUE((ForwardTakesConstRef<trails::nn::LayerNorm<16>, BatchTensor<16>, BatchTensor<16>>));
+}
+
+TEST(BatchAgnosticTest, ParametersExposeRecurseOverload) {
+    EXPECT_TRUE((ExposesRecursiveParameters<trails::nn::Linear<8, 16>>));
+    EXPECT_TRUE((ExposesRecursiveParameters<trails::nn::RNN<8, 16, 2>>));
 }
 
 TEST(BatchAgnosticTest, LinearDifferentBatchSizes) {

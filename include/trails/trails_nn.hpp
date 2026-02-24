@@ -33,8 +33,8 @@ public:
         return BatchTensor<OutDim>(inner_->forward(input.t()));
     }
 
-    std::vector<torch::Tensor> parameters() const {
-        return torch::nn::Module::parameters();
+    std::vector<torch::Tensor> parameters(bool recurse = true) const {
+        return torch::nn::Module::parameters(recurse);
     }
 };
 
@@ -78,8 +78,8 @@ public:
         return BatchTensor<OutC, OutH, OutW>(inner_->forward(input.t()));
     }
 
-    std::vector<torch::Tensor> parameters() const {
-        return torch::nn::Module::parameters();
+    std::vector<torch::Tensor> parameters(bool recurse = true) const {
+        return torch::nn::Module::parameters(recurse);
     }
 };
 
@@ -104,8 +104,8 @@ public:
         return BatchTensor<Dim>(inner_->forward(input.t()));
     }
 
-    std::vector<torch::Tensor> parameters() const {
-        return torch::nn::Module::parameters();
+    std::vector<torch::Tensor> parameters(bool recurse = true) const {
+        return torch::nn::Module::parameters(recurse);
     }
 };
 
@@ -135,8 +135,8 @@ public:
         return BatchTensor<Dims...>(inner_->forward(input.t()));
     }
 
-    std::vector<torch::Tensor> parameters() const {
-        return torch::nn::Module::parameters();
+    std::vector<torch::Tensor> parameters(bool recurse = true) const {
+        return torch::nn::Module::parameters(recurse);
     }
 };
 
@@ -221,8 +221,8 @@ public:
         return BatchTensor<SeqLen, ModelDim>(Wo->forward(concat));
     }
 
-    std::vector<torch::Tensor> parameters() const {
-        return torch::nn::Module::parameters();
+    std::vector<torch::Tensor> parameters(bool recurse = true) const {
+        return torch::nn::Module::parameters(recurse);
     }
 };
 
@@ -250,8 +250,8 @@ public:
         return BatchTensor<C, L>(inner_->forward(input.t()));
     }
 
-    std::vector<torch::Tensor> parameters() const {
-        return torch::nn::Module::parameters();
+    std::vector<torch::Tensor> parameters(bool recurse = true) const {
+        return torch::nn::Module::parameters(recurse);
     }
 };
 
@@ -279,8 +279,8 @@ public:
         return BatchTensor<C, H, W>(inner_->forward(input.t()));
     }
 
-    std::vector<torch::Tensor> parameters() const {
-        return torch::nn::Module::parameters();
+    std::vector<torch::Tensor> parameters(bool recurse = true) const {
+        return torch::nn::Module::parameters(recurse);
     }
 };
 
@@ -312,8 +312,8 @@ public:
         return { BatchTensor<SeqLen, HiddenSize>{output}, h_n };
     }
 
-    std::vector<torch::Tensor> parameters() const {
-        return torch::nn::Module::parameters();
+    std::vector<torch::Tensor> parameters(bool recurse = true) const {
+        return torch::nn::Module::parameters(recurse);
     }
 };
 
@@ -345,8 +345,8 @@ public:
         return { BatchTensor<SeqLen, HiddenSize>{output}, h_n, c_n };
     }
 
-    std::vector<torch::Tensor> parameters() const {
-        return torch::nn::Module::parameters();
+    std::vector<torch::Tensor> parameters(bool recurse = true) const {
+        return torch::nn::Module::parameters(recurse);
     }
 };
 
@@ -377,8 +377,8 @@ public:
         return { BatchTensor<SeqLen, HiddenSize>{output}, h_n };
     }
 
-    std::vector<torch::Tensor> parameters() const {
-        return torch::nn::Module::parameters();
+    std::vector<torch::Tensor> parameters(bool recurse = true) const {
+        return torch::nn::Module::parameters(recurse);
     }
 };
 
