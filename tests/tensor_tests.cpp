@@ -3623,8 +3623,10 @@ TEST(TensorTest, expand_1dim) {
     auto e = t.expand<3, 4>();
     EXPECT_TRUE(e.compare_sizes(torch::IntArrayRef{3, 4}));
     // All values should be 1 (broadcast of ones)
-    for (int i = 0; i < e.numel(); ++i) {
-        EXPECT_FLOAT_EQ(e.data_ptr<float>()[i], 1.0f);
+    // expand returns a non-contiguous view, so use contiguous for data access
+    auto ec = e.contiguous();
+    for (int i = 0; i < ec.numel(); ++i) {
+        EXPECT_FLOAT_EQ(ec.data_ptr<float>()[i], 1.0f);
     }
 }
 
