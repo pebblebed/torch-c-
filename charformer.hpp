@@ -182,6 +182,16 @@ public:
 using namespace torch::indexing;
 
 torch::Tensor positional_encoding(int64_t seq_length, int64_t hidden_dim) {
+    if (seq_length <= 0) {
+        throw std::runtime_error("positional_encoding: seq_length must be > 0");
+    }
+    if (hidden_dim <= 0) {
+        throw std::runtime_error("positional_encoding: hidden_dim must be > 0");
+    }
+    if (hidden_dim % 2 != 0) {
+        throw std::runtime_error("positional_encoding: hidden_dim must be even");
+    }
+
     auto position = torch::arange(0, seq_length, torch::kFloat32).unsqueeze(1);
     auto div_term = torch::exp(torch::arange(0, hidden_dim, 2, torch::kFloat32) *
                                (-std::log(10000.0) / hidden_dim));
@@ -189,14 +199,16 @@ torch::Tensor positional_encoding(int64_t seq_length, int64_t hidden_dim) {
     auto pe = torch::zeros({seq_length, hidden_dim});
     pe.index_put_({Slice(), Slice(0, None, 2)}, torch::sin(position * div_term));
     pe.index_put_({Slice(), Slice(1, None, 2)}, torch::cos(position * div_term));
-    assert(pe.dim() == 2);
-    assert(pe.size(0) == seq_length);
-    assert(pe.size(1) == hidden_dim);
+    if (pe.dim() != 2 || pe.size(0) != seq_length || pe.size(1) != hidden_dim) {
+        throw std::runtime_error("positional_encoding: internal shape mismatch");
+    }
     return pe;
 }
 
 torch::Tensor apply_positional_encoding(torch::Tensor x) {
-    assert(x.dim() == 4);
+    if (x.dim() != 4) {
+        throw std::runtime_error("apply_positional_encoding: expected input shape [B, L, H, D]");
+    }
     auto B = x.size(0);
     auto L = x.size(1);
     auto H = x.size(2);

@@ -60,10 +60,14 @@ Date: 2026-02-26
   - `demos/charformer-shakespeare.cpp:288`
   - `tests/charformer_tests.cpp:89`
 
-- [ ] `MEDIUM` Replace release-stripped `assert` checks with runtime validation for critical paths.
+- [x] `MEDIUM` Replace release-stripped `assert` checks with runtime validation for critical paths.
+  Resolution: replaced assert-only guards in positional encoding helpers with explicit runtime validation and deterministic exceptions (input rank/shape constraints and argument sanity checks).
+  Regression tests:
+  - `CharformerTests.ApplyPosEncodingRejectsNon4DInput`
   Files:
-  - `charformer.hpp:143`
-  - `charformer.hpp:150`
+  - `charformer.hpp:184`
+  - `charformer.hpp:208`
+  - `tests/charformer_tests.cpp:29`
 
 - [ ] `MEDIUM` Reduce invariant bypass surface from raw tensor exposure.
   Typed shape guarantees are easy to circumvent via public raw tensor access and untyped overloads.

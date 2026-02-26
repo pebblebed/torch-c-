@@ -26,6 +26,11 @@ TEST(CharformerTests, ApplyPosEncoding) {
     EXPECT_EQ(y.size(3), D);
 }
 
+TEST(CharformerTests, ApplyPosEncodingRejectsNon4DInput) {
+    auto x = torch::randn({2, 3, 4});
+    EXPECT_THROW(apply_positional_encoding(x), std::runtime_error);
+}
+
 TEST(CharformerTests, RMSNorm) {
     constexpr int B = 1;
     constexpr int D = 3;
