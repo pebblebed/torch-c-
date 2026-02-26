@@ -8,10 +8,10 @@ namespace trainium {
 // Dimension debugging
 static inline void dim_debug_print(const torch::Tensor &t, const std::string &name) {
 #ifndef NDEBUG
-    printf("%s: dims=%zu, sizes=", name.c_str(), t.dim());
-    for (int i = 0; i < t.dim(); i++)
+    printf("%s: dims=%lld, sizes=", name.c_str(), static_cast<long long>(t.dim()));
+    for (int64_t i = 0; i < t.dim(); i++)
     {
-        printf("%zu ", t.size(i));
+        printf("%lld ", static_cast<long long>(t.size(i)));
     }
     printf("\n");
 #endif

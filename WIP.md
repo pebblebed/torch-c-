@@ -96,8 +96,8 @@ Date: 2026-02-26
   - `tests/charformer_tests.cpp:352`
   - `tests/tensor_tests.cpp:2357`
 
-- [ ] `LOW` Fix format-specifier mismatches in debug utility logging.
-  Build emits warnings because `%zu` is used with `int64_t` values from LibTorch tensor dimensions/sizes.
+- [x] `LOW` Fix format-specifier mismatches in debug utility logging.
+  Resolution: updated debug format specifiers/casts to print LibTorch `int64_t` dimension values without compiler warnings.
   Files:
   - `util.hpp:11`
   - `util.hpp:14`
