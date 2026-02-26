@@ -22,13 +22,14 @@ Date: 2026-02-26
   - `dataset_dir.cpp:50`
   - `tests/dataset_tests.cpp:28`
 
-- [ ] `HIGH` Fix `MMappedFile` constructor initializer-order bug.
+- [x] `HIGH` Fix `MMappedFile` constructor initializer-order bug.
   `lseek`/`mmap` currently use `fd` before checking whether `open()` succeeded.
+  Resolution: reordered constructor flow to validate `open()` first, preserved original errno in error messages, and added regression coverage for missing-path diagnostics.
   Files:
-  - `dataset_dir.hpp:24`
-  - `dataset_dir.hpp:25`
-  - `dataset_dir.hpp:26`
-  - `dataset_dir.hpp:28`
+  - `dataset_dir.hpp:23`
+  - `dataset_dir.hpp:36`
+  - `dataset_dir.hpp:50`
+  - `tests/dataset_tests.cpp:49`
 
 - [ ] `HIGH` Fix dataset directory traversal accounting.
   Recursive `traverse()` resets `total_size`, corrupting aggregate dataset size.

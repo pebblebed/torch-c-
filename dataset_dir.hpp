@@ -8,6 +8,7 @@
 #include <sys/stat.h>
 #include <cerrno>
 #include <cstring>
+#include <stdexcept>
 
 namespace trainium {
 
@@ -16,42 +17,71 @@ typedef torch::Tensor Y;
 typedef torch::data::Example<X, Y> Example;
 
 struct MMappedFile {
-    const int fd;
-    const size_t size;
+    int fd;
+    size_t size;
     const uint8_t* data;
 
     MMappedFile(const std::string& path)
-    : fd(::open(path.c_str(), O_RDONLY))
-    , size(lseek(fd, 0, SEEK_END))
-    , data(static_cast<uint8_t*>(::mmap(nullptr, size, PROT_READ, MAP_SHARED, fd, 0)))
+    : fd(-1)
+    , size(0)
+    , data(nullptr)
     {
+        fd = ::open(path.c_str(), O_RDONLY);
         if (fd == -1) {
-            throw std::runtime_error("Failed to open file: " + std::string(strerror(errno)));
+            throw std::runtime_error("Failed to open file: " + path + " " + std::string(strerror(errno)));
         }
+
+        auto end = ::lseek(fd, 0, SEEK_END);
+        if (end == -1) {
+            auto open_errno = errno;
+            ::close(fd);
+            fd = -1;
+            throw std::runtime_error("Failed to seek file: " + path + " " + std::string(strerror(open_errno)));
+        }
+        size = static_cast<size_t>(end);
+        if (size == 0) {
+            ::close(fd);
+            fd = -1;
+            return;
+        }
+
+        auto mapped = ::mmap(nullptr, size, PROT_READ, MAP_SHARED, fd, 0);
+        auto mmap_errno = errno;
         ::close(fd);
-        if (size != 0 && data == MAP_FAILED) {
-            if (size == 0) {
-                return;
-            }
-            throw std::runtime_error("Failed to mmap file: " + path + " " + std::string(strerror(errno)));
+        fd = -1;
+        if (mapped == MAP_FAILED) {
+            throw std::runtime_error("Failed to mmap file: " + path + " " + std::string(strerror(mmap_errno)));
         }
+        data = static_cast<const uint8_t*>(mapped);
     }
 
-    MMappedFile(MMappedFile&& other)
+    MMappedFile(const MMappedFile&) = delete;
+    MMappedFile& operator=(const MMappedFile&) = delete;
+
+    MMappedFile(MMappedFile&& other) noexcept
     : fd(other.fd), size(other.size), data(other.data) {
+        other.fd = -1;
+        other.size = 0;
         other.data = nullptr;
     }
 
-    MMappedFile& operator=(MMappedFile&& other) {
+    MMappedFile& operator=(MMappedFile&& other) noexcept {
         if (this != &other) {
-            this->~MMappedFile();
-            new (this) MMappedFile(std::move(other));
+            if (data != nullptr) {
+                ::munmap(const_cast<uint8_t*>(data), size);
+            }
+            fd = other.fd;
+            size = other.size;
+            data = other.data;
+            other.fd = -1;
+            other.size = 0;
+            other.data = nullptr;
         }
         return *this;
     }
 
     ~MMappedFile() {
-        if (data != nullptr && data != MAP_FAILED) {
+        if (data != nullptr) {
             ::munmap(const_cast<uint8_t*>(data), size);
         }
     }

@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -43,4 +44,18 @@ TEST(DatasetFileTests, ExactContextLengthProvidesSingleExample) {
     ASSERT_EQ(ex.target.size(0), static_cast<int64_t>(n_ctx - 1));
     EXPECT_EQ(ex.data[0].item<int64_t>(), 10);
     EXPECT_EQ(ex.target[0].item<int64_t>(), 11);
+}
+
+TEST(MMappedFileTests, MissingPathPreservesOpenErrorMessage) {
+    auto missing_path = std::filesystem::temp_directory_path()
+        / std::filesystem::path("trails_missing_" + std::to_string(::getpid()) + "_nope.bin");
+    std::filesystem::remove(missing_path);
+
+    try {
+        trainium::MMappedFile f(missing_path.string());
+        FAIL() << "Expected constructor to throw for missing file";
+    } catch (const std::runtime_error& e) {
+        auto message = std::string(e.what());
+        EXPECT_NE(message.find(std::strerror(ENOENT)), std::string::npos);
+    }
 }
