@@ -2889,3 +2889,384 @@ TEST(BatchTensorTest, ComparisonLtLeGtGe) {
     EXPECT_TRUE(torch::equal(a.ge(b).t(), torch::tensor({{false, true, true}, {true, false, true}})));
     EXPECT_TRUE(torch::equal((a >= b).t(), torch::tensor({{false, true, true}, {true, false, true}})));
 }
+
+// ============================================================
+// Wave 2: permute, select, narrow, flip
+// ============================================================
+
+TEST(TensorTest, Permute3D) {
+    auto t = Tensor<3, 4, 5>::arange();
+    auto p = t.permute<2, 0, 1>();
+    EXPECT_TRUE(p.compare_sizes(torch::IntArrayRef{5, 3, 4}));
+    // Verify element mapping: t[i,j,k] == p[k,i,j]
+    auto orig_val = t.t().index({1, 2, 3}).item<float>();
+    auto perm_val = p.t().index({3, 1, 2}).item<float>();
+    EXPECT_FLOAT_EQ(orig_val, perm_val);
+}
+
+TEST(TensorTest, Permute2D) {
+    auto t = Tensor<3, 7>::arange();
+    auto p = t.permute<1, 0>();
+    EXPECT_TRUE(p.compare_sizes(torch::IntArrayRef{7, 3}));
+    // Should be the same as transpose<0,1>
+    auto tr = t.transpose<0, 1>();
+    EXPECT_TRUE(torch::equal(p.t(), tr.t()));
+}
+
+TEST(TensorTest, PermuteIdentity) {
+    auto t = Tensor<2, 3, 4>::randn();
+    auto p = t.permute<0, 1, 2>();
+    EXPECT_TRUE(p.compare_sizes(torch::IntArrayRef{2, 3, 4}));
+    EXPECT_TRUE(torch::equal(p.t(), t.t()));
+}
+
+TEST(TensorTest, Select_Dim0) {
+    auto t = Tensor<3, 4, 5>::arange();
+    auto s = t.select<0>(1);
+    EXPECT_TRUE(s.compare_sizes(torch::IntArrayRef{4, 5}));
+    // t[1, 0, 0] == s[0, 0]
+    EXPECT_FLOAT_EQ(t.t().index({1, 0, 0}).item<float>(), s.t().index({0, 0}).item<float>());
+}
+
+TEST(TensorTest, Select_Dim1) {
+    auto t = Tensor<3, 4, 5>::arange();
+    auto s = t.select<1>(2);
+    EXPECT_TRUE(s.compare_sizes(torch::IntArrayRef{3, 5}));
+    // t[0, 2, 0] == s[0, 0]
+    EXPECT_FLOAT_EQ(t.t().index({0, 2, 0}).item<float>(), s.t().index({0, 0}).item<float>());
+}
+
+TEST(TensorTest, Select_Dim2) {
+    auto t = Tensor<3, 4, 5>::arange();
+    auto s = t.select<2>(4);
+    EXPECT_TRUE(s.compare_sizes(torch::IntArrayRef{3, 4}));
+    // t[0, 0, 4] == s[0, 0]
+    EXPECT_FLOAT_EQ(t.t().index({0, 0, 4}).item<float>(), s.t().index({0, 0}).item<float>());
+}
+
+TEST(TensorTest, Narrow_Basic) {
+    auto t = Tensor<3, 8, 5>::arange();
+    // Narrow dim 1 from index 2 with length 3: 8 -> 3
+    auto n = t.narrow<1, 2, 3>();
+    EXPECT_TRUE(n.compare_sizes(torch::IntArrayRef{3, 3, 5}));
+    // t[0, 2, 0] == n[0, 0, 0]
+    EXPECT_FLOAT_EQ(t.t().index({0, 2, 0}).item<float>(), n.t().index({0, 0, 0}).item<float>());
+}
+
+TEST(TensorTest, Narrow_FullRange) {
+    auto t = Tensor<3, 4>::arange();
+    // Narrow dim 1, start=0, length=4 -> identity
+    auto n = t.narrow<1, 0, 4>();
+    EXPECT_TRUE(n.compare_sizes(torch::IntArrayRef{3, 4}));
+    EXPECT_TRUE(torch::equal(n.t(), t.t()));
+}
+
+TEST(TensorTest, Narrow_SingleElement) {
+    auto t = Tensor<3, 4>::arange();
+    // Narrow dim 0, start=1, length=1 -> Tensor<1, 4>
+    auto n = t.narrow<0, 1, 1>();
+    EXPECT_TRUE(n.compare_sizes(torch::IntArrayRef{1, 4}));
+}
+
+TEST(TensorTest, Flip_Basic) {
+    auto t = Tensor<3>(torch::tensor({1.0f, 2.0f, 3.0f}));
+    auto f = t.flip<0>();
+    EXPECT_TRUE(f.compare_sizes(torch::IntArrayRef{3}));
+    EXPECT_FLOAT_EQ(f.data_ptr<float>()[0], 3.0f);
+    EXPECT_FLOAT_EQ(f.data_ptr<float>()[1], 2.0f);
+    EXPECT_FLOAT_EQ(f.data_ptr<float>()[2], 1.0f);
+}
+
+TEST(TensorTest, Flip_2D) {
+    auto t = Tensor<2, 3>::arange();
+    // Flip dim 1: reverse each row
+    auto f = t.flip<1>();
+    EXPECT_TRUE(f.compare_sizes(torch::IntArrayRef{2, 3}));
+    // Original row 0: [0, 1, 2], flipped: [2, 1, 0]
+    EXPECT_FLOAT_EQ(f.t().index({0, 0}).item<float>(), 2.0f);
+    EXPECT_FLOAT_EQ(f.t().index({0, 1}).item<float>(), 1.0f);
+    EXPECT_FLOAT_EQ(f.t().index({0, 2}).item<float>(), 0.0f);
+}
+
+TEST(TensorTest, Flip_MultipleDims) {
+    auto t = Tensor<2, 3>::arange();
+    auto f = t.flip<0, 1>();
+    EXPECT_TRUE(f.compare_sizes(torch::IntArrayRef{2, 3}));
+    // Flip both dims: [5, 4, 3; 2, 1, 0]
+    EXPECT_FLOAT_EQ(f.t().index({0, 0}).item<float>(), 5.0f);
+    EXPECT_FLOAT_EQ(f.t().index({1, 2}).item<float>(), 0.0f);
+}
+
+// ============================================================
+// Wave 2: BatchTensor permute, select, narrow, flip
+// ============================================================
+
+TEST(BatchTensorTest, Permute) {
+    auto bt = BatchTensor<3, 4, 5>(torch::randn({2, 3, 4, 5}));
+    auto p = bt.permute<2, 0, 1>();
+    EXPECT_EQ(p.batch_size(), 2);
+    EXPECT_EQ(p.t().size(1), 5);
+    EXPECT_EQ(p.t().size(2), 3);
+    EXPECT_EQ(p.t().size(3), 4);
+}
+
+TEST(BatchTensorTest, PermuteIdentity) {
+    auto bt = BatchTensor<3, 4>(torch::randn({2, 3, 4}));
+    auto p = bt.permute<0, 1>();
+    EXPECT_EQ(p.batch_size(), 2);
+    EXPECT_EQ(p.t().size(1), 3);
+    EXPECT_EQ(p.t().size(2), 4);
+    EXPECT_TRUE(torch::equal(p.t(), bt.t()));
+}
+
+TEST(BatchTensorTest, Select) {
+    auto bt = BatchTensor<3, 4, 5>(torch::randn({2, 3, 4, 5}));
+    auto s = bt.select<1>(2);
+    EXPECT_EQ(s.batch_size(), 2);
+    EXPECT_EQ(s.t().size(1), 3);
+    EXPECT_EQ(s.t().size(2), 5);
+}
+
+TEST(BatchTensorTest, Narrow) {
+    auto bt = BatchTensor<3, 8, 5>(torch::randn({2, 3, 8, 5}));
+    auto n = bt.narrow<1, 2, 3>();
+    EXPECT_EQ(n.batch_size(), 2);
+    EXPECT_EQ(n.t().size(1), 3);
+    EXPECT_EQ(n.t().size(2), 3);
+    EXPECT_EQ(n.t().size(3), 5);
+}
+
+TEST(BatchTensorTest, Flip) {
+    auto bt = BatchTensor<3>(torch::tensor({{1.0f, 2.0f, 3.0f}, {4.0f, 5.0f, 6.0f}}));
+    auto f = bt.flip<0>();
+    EXPECT_EQ(f.batch_size(), 2);
+    EXPECT_EQ(f.t().size(1), 3);
+    // Row 0 flipped: [3, 2, 1]
+    EXPECT_FLOAT_EQ(f.t().index({0, 0}).item<float>(), 3.0f);
+    EXPECT_FLOAT_EQ(f.t().index({0, 2}).item<float>(), 1.0f);
+    // Row 1 flipped: [6, 5, 4]
+    EXPECT_FLOAT_EQ(f.t().index({1, 0}).item<float>(), 6.0f);
+    EXPECT_FLOAT_EQ(f.t().index({1, 2}).item<float>(), 4.0f);
+}
+
+// ---- argmax / argmin ----
+
+TEST(TensorTest, argmax_scalar) {
+    auto t = Tensor<2, 3>(torch::tensor({{1.0f, 5.0f, 3.0f}, {4.0f, 2.0f, 6.0f}}));
+    auto m = t.argmax();
+    ASSERT_EQ(m.dim(), 0);
+    EXPECT_EQ(m.item<int64_t>(), 5);  // index of 6.0
+}
+
+TEST(TensorTest, argmin_scalar) {
+    auto t = Tensor<2, 3>(torch::tensor({{1.0f, 5.0f, 3.0f}, {4.0f, 2.0f, 6.0f}}));
+    auto m = t.argmin();
+    ASSERT_EQ(m.dim(), 0);
+    EXPECT_EQ(m.item<int64_t>(), 0);  // index of 1.0
+}
+
+TEST(TensorTest, argmax_dim0) {
+    // shape [2, 3], argmax along dim 0 → shape [3]
+    auto t = Tensor<2, 3>(torch::tensor({{1.0f, 5.0f, 3.0f}, {4.0f, 2.0f, 6.0f}}));
+    auto m = t.argmax<0>();
+    EXPECT_TRUE(m.compare_sizes(torch::IntArrayRef{3}));
+    // column 0: max is 4.0 at row 1, column 1: max is 5.0 at row 0, column 2: max is 6.0 at row 1
+    EXPECT_EQ(m.t().index({0}).item<int64_t>(), 1);
+    EXPECT_EQ(m.t().index({1}).item<int64_t>(), 0);
+    EXPECT_EQ(m.t().index({2}).item<int64_t>(), 1);
+}
+
+TEST(TensorTest, argmax_dim1) {
+    // shape [2, 3], argmax along dim 1 → shape [2]
+    auto t = Tensor<2, 3>(torch::tensor({{1.0f, 5.0f, 3.0f}, {4.0f, 2.0f, 6.0f}}));
+    auto m = t.argmax<1>();
+    EXPECT_TRUE(m.compare_sizes(torch::IntArrayRef{2}));
+    EXPECT_EQ(m.t().index({0}).item<int64_t>(), 1);  // row 0: max is 5.0 at col 1
+    EXPECT_EQ(m.t().index({1}).item<int64_t>(), 2);  // row 1: max is 6.0 at col 2
+}
+
+TEST(TensorTest, argmin_dim0) {
+    auto t = Tensor<2, 3>(torch::tensor({{1.0f, 5.0f, 3.0f}, {4.0f, 2.0f, 6.0f}}));
+    auto m = t.argmin<0>();
+    EXPECT_TRUE(m.compare_sizes(torch::IntArrayRef{3}));
+    EXPECT_EQ(m.t().index({0}).item<int64_t>(), 0);  // col 0: min is 1.0 at row 0
+    EXPECT_EQ(m.t().index({1}).item<int64_t>(), 1);  // col 1: min is 2.0 at row 1
+    EXPECT_EQ(m.t().index({2}).item<int64_t>(), 0);  // col 2: min is 3.0 at row 0
+}
+
+TEST(TensorTest, argmax_3d) {
+    // shape [3, 4, 5], argmax along dim 1 → shape [3, 5]
+    auto t = Tensor<3, 4, 5>::randn();
+    auto m = t.argmax<1>();
+    EXPECT_TRUE(m.compare_sizes(torch::IntArrayRef{3, 5}));
+}
+
+TEST(BatchTensorTest, argmax_scalar) {
+    auto raw = torch::tensor({{1.0f, 5.0f}, {3.0f, 2.0f}, {4.0f, 0.0f}});
+    auto bt = BatchTensor<2>(raw);
+    auto m = bt.argmax();
+    ASSERT_EQ(m.dim(), 0);
+    EXPECT_EQ(m.item<int64_t>(), 1);  // index of 5.0
+}
+
+TEST(BatchTensorTest, argmin_scalar) {
+    auto raw = torch::tensor({{1.0f, 5.0f}, {3.0f, 2.0f}, {4.0f, 0.0f}});
+    auto bt = BatchTensor<2>(raw);
+    auto m = bt.argmin();
+    ASSERT_EQ(m.dim(), 0);
+    EXPECT_EQ(m.item<int64_t>(), 5);  // index of 0.0
+}
+
+TEST(BatchTensorTest, argmax_dim) {
+    // BatchTensor<3, 4> with batch_size=2: argmax<1>() reduces math dim 1 → BatchTensor<3>
+    auto raw = torch::randn({2, 3, 4});
+    auto bt = BatchTensor<3, 4>(raw);
+    auto m = bt.argmax<1>();
+    ASSERT_EQ(m.batch_size(), 2);
+    EXPECT_EQ(m.t().sizes(), (std::vector<int64_t>{2, 3}));
+}
+
+TEST(BatchTensorTest, argmin_dim) {
+    // BatchTensor<3, 4> with batch_size=2: argmin<0>() reduces math dim 0 → BatchTensor<4>
+    auto raw = torch::randn({2, 3, 4});
+    auto bt = BatchTensor<3, 4>(raw);
+    auto m = bt.argmin<0>();
+    ASSERT_EQ(m.batch_size(), 2);
+    EXPECT_EQ(m.t().sizes(), (std::vector<int64_t>{2, 4}));
+}
+
+TEST(BatchTensorTest, argmax_dim_values) {
+    // Verify correct indices
+    auto raw = torch::tensor({{1.0f, 5.0f, 3.0f}, {4.0f, 2.0f, 6.0f}});
+    auto bt = BatchTensor<3>(raw);  // batch=2, math dim 0 has size 3
+    auto m = bt.argmax<0>();  // reduces math dim 0 → scalar per batch element
+    // batch 0: max is 5.0 at index 1
+    // batch 1: max is 6.0 at index 2
+    // Result is BatchTensor<> which has shape [2] (just batch)
+    ASSERT_EQ(m.batch_size(), 2);
+}
+
+// ============================================================
+// Wave 2: Factory methods and to()
+// ============================================================
+
+TEST(TensorTest, full_creates_correct_shape_and_value) {
+    auto t = Tensor<2, 3>::full(7.5f);
+    EXPECT_TRUE(t.compare_sizes(torch::IntArrayRef{2, 3}));
+    for (int i = 0; i < t.numel(); ++i) {
+        EXPECT_FLOAT_EQ(t.data_ptr<float>()[i], 7.5f);
+    }
+    // Scalar
+    auto s = Tensor<>::full(42.0f);
+    EXPECT_FLOAT_EQ(s.item<float>(), 42.0f);
+}
+
+TEST(TensorTest, empty_creates_correct_shape) {
+    auto t = Tensor<3, 4>::empty();
+    EXPECT_TRUE(t.compare_sizes(torch::IntArrayRef{3, 4}));
+    // Just check shape, values are uninitialized
+}
+
+TEST(TensorTest, rand_creates_correct_shape_and_range) {
+    auto t = Tensor<5, 6>::rand();
+    EXPECT_TRUE(t.compare_sizes(torch::IntArrayRef{5, 6}));
+    // All values should be in [0, 1)
+    EXPECT_TRUE((t.t() >= 0).all().item<bool>());
+    EXPECT_TRUE((t.t() < 1).all().item<bool>());
+}
+
+TEST(TensorTest, eye_creates_identity) {
+    auto id = eye<3>();
+    EXPECT_TRUE(id.compare_sizes(torch::IntArrayRef{3, 3}));
+    auto expected = torch::eye(3);
+    EXPECT_TRUE(torch::allclose(id.t(), expected));
+}
+
+TEST(TensorTest, eye_1x1) {
+    auto id = eye<1>();
+    EXPECT_TRUE(id.compare_sizes(torch::IntArrayRef{1, 1}));
+    EXPECT_FLOAT_EQ(id.item<float>(), 1.0f);
+}
+
+TEST(TensorTest, linspace_creates_evenly_spaced) {
+    auto t = linspace<5>(0.0f, 1.0f);
+    EXPECT_TRUE(t.compare_sizes(torch::IntArrayRef{5}));
+    auto expected = torch::linspace(0.0f, 1.0f, 5);
+    EXPECT_TRUE(torch::allclose(t.t(), expected));
+}
+
+TEST(TensorTest, linspace_negative_range) {
+    auto t = linspace<3>(-1.0f, 1.0f);
+    EXPECT_TRUE(t.compare_sizes(torch::IntArrayRef{3}));
+    EXPECT_NEAR(t.data_ptr<float>()[0], -1.0f, 1e-5f);
+    EXPECT_NEAR(t.data_ptr<float>()[1], 0.0f, 1e-5f);
+    EXPECT_NEAR(t.data_ptr<float>()[2], 1.0f, 1e-5f);
+}
+
+TEST(TensorTest, to_device) {
+    auto t = Tensor<2, 3>::ones();
+    auto cpu = t.to(torch::kCPU);
+    EXPECT_TRUE(cpu.compare_sizes(torch::IntArrayRef{2, 3}));
+    EXPECT_TRUE(torch::allclose(cpu.t(), t.t()));
+}
+
+TEST(TensorTest, to_dtype) {
+    auto t = Tensor<2, 3>::ones();
+    auto d = t.to(torch::kDouble);
+    EXPECT_TRUE(d.compare_sizes(torch::IntArrayRef{2, 3}));
+    EXPECT_EQ(d.t().dtype(), torch::kDouble);
+}
+
+TEST(TensorTest, to_device_and_dtype) {
+    auto t = Tensor<2, 3>::ones();
+    auto d = t.to(torch::kCPU, torch::kDouble);
+    EXPECT_TRUE(d.compare_sizes(torch::IntArrayRef{2, 3}));
+    EXPECT_EQ(d.t().dtype(), torch::kDouble);
+}
+
+// BatchTensor factory and to() tests
+
+TEST(BatchTensorTest, full_creates_correct_shape_and_value) {
+    auto bt = BatchTensor<3, 4>::full(5, 2.5f);
+    ASSERT_EQ(bt.batch_size(), 5);
+    ASSERT_EQ(bt.t().size(1), 3);
+    ASSERT_EQ(bt.t().size(2), 4);
+    EXPECT_NEAR(bt.t().sum().item<float>(), 5.0f * 3 * 4 * 2.5f, 1e-4f);
+}
+
+TEST(BatchTensorTest, empty_creates_correct_shape) {
+    auto bt = BatchTensor<3, 4>::empty(7);
+    ASSERT_EQ(bt.batch_size(), 7);
+    ASSERT_EQ(bt.t().size(1), 3);
+    ASSERT_EQ(bt.t().size(2), 4);
+}
+
+TEST(BatchTensorTest, rand_creates_correct_shape_and_range) {
+    auto bt = BatchTensor<3, 4>::rand(5);
+    ASSERT_EQ(bt.batch_size(), 5);
+    ASSERT_EQ(bt.t().size(1), 3);
+    ASSERT_EQ(bt.t().size(2), 4);
+    EXPECT_TRUE((bt.t() >= 0).all().item<bool>());
+    EXPECT_TRUE((bt.t() < 1).all().item<bool>());
+}
+
+TEST(BatchTensorTest, to_device) {
+    auto bt = BatchTensor<3, 4>::ones(5);
+    auto cpu = bt.to(torch::kCPU);
+    ASSERT_EQ(cpu.batch_size(), 5);
+    EXPECT_TRUE(torch::allclose(cpu.t(), bt.t()));
+}
+
+TEST(BatchTensorTest, to_dtype) {
+    auto bt = BatchTensor<3, 4>::ones(5);
+    auto d = bt.to(torch::kDouble);
+    ASSERT_EQ(d.batch_size(), 5);
+    EXPECT_EQ(d.t().dtype(), torch::kDouble);
+}
+
+TEST(BatchTensorTest, to_device_and_dtype) {
+    auto bt = BatchTensor<3, 4>::ones(5);
+    auto d = bt.to(torch::kCPU, torch::kDouble);
+    ASSERT_EQ(d.batch_size(), 5);
+    EXPECT_EQ(d.t().dtype(), torch::kDouble);
+}
