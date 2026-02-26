@@ -214,6 +214,32 @@ struct permute_dims {
     using type = val_sequence<size_t, Seq::template get<P>::value...>;
 };
 
+// multiply_dims: element-wise multiply two val_sequences
+template<typename SeqA, typename SeqB>
+struct multiply_dims;
+
+template<typename V, V... As, V... Bs>
+struct multiply_dims<val_sequence<V, As...>, val_sequence<V, Bs...>> {
+    static_assert(sizeof...(As) == sizeof...(Bs), "multiply_dims: sequences must have same length");
+    using type = val_sequence<V, (As * Bs)...>;
+};
+
+// expand_validate: static_assert that non-1 dims match between Old and New
+template<typename OldSeq, typename NewSeq>
+struct expand_validate;
+
+template<typename V>
+struct expand_validate<val_sequence<V>, val_sequence<V>> {
+    static constexpr bool value = true;
+};
+
+template<typename V, V OldHead, V... OldRest, V NewHead, V... NewRest>
+struct expand_validate<val_sequence<V, OldHead, OldRest...>, val_sequence<V, NewHead, NewRest...>> {
+    static constexpr bool value =
+        (OldHead == 1 || OldHead == NewHead) &&
+        expand_validate<val_sequence<V, OldRest...>, val_sequence<V, NewRest...>>::value;
+};
+
 } // namespace detail
 
 // Forward declarations
@@ -416,6 +442,21 @@ struct Tensor {
     Tensor clone() { return { t_.clone() }; }
     Tensor detach() { return { t_.detach() }; }
     Tensor contiguous() { return { t_.contiguous() }; }
+    bool is_contiguous() const { return t_.is_contiguous(); }
+
+    // masked_fill: fill elements where mask is true with value
+    Tensor masked_fill(Tensor<Dims...> mask, float value) const {
+        return { t_.masked_fill(mask.t(), value) };
+    }
+
+    // Autograd utilities
+    Tensor& requires_grad_(bool requires_grad = true) {
+        t_.requires_grad_(requires_grad);
+        return *this;
+    }
+    bool requires_grad() const { return t_.requires_grad(); }
+    Tensor grad() const { return { t_.grad() }; }
+
     Tensor operator+(Tensor<Dims...> other) { return { t_ + other.t() }; }
     Tensor operator+(torch::Tensor other) {
         validate_raw_operand_shape(other, "+");
@@ -573,6 +614,57 @@ struct Tensor {
         return { t_.flip({FlipDims...}) };
     }
 
+    // cumsum<D>() — shape-preserving cumulative sum along dimension D
+    template<int64_t D>
+    Tensor cumsum() const {
+        static_assert(D >= 0 && D < (int64_t)dim(), "cumsum: dim out of range");
+        return { t_.cumsum(D) };
+    }
+
+    // cumprod<D>() — shape-preserving cumulative product along dimension D
+    template<int64_t D>
+    Tensor cumprod() const {
+        static_assert(D >= 0 && D < (int64_t)dim(), "cumprod: dim out of range");
+        return { t_.cumprod(D) };
+    }
+
+    // chunk<N, Dim>(): split tensor into N equal pieces along Dim
+    // Returns std::tuple of N tensors, each with Dim/N at position Dim
+    template<int N, size_t Dim>
+    auto chunk() const {
+        static_assert(Dim < dim(), "chunk: dim out of range");
+        constexpr size_t orig = seq_t::template get<Dim>::value;
+        static_assert(orig % N == 0, "chunk: dim must be divisible by N");
+        using new_seq = typename detail::replace_dim<seq_t, Dim, orig / N>::type;
+        using chunk_t = typename detail::seq_to_tensor<new_seq>::type;
+        auto chunks = t_.chunk(N, Dim);
+        return [&]<size_t ...Is>(std::index_sequence<Is...>) {
+            return std::make_tuple(chunk_t{chunks[Is]}...);
+        }(std::make_index_sequence<N>{});
+    }
+
+    // repeat<R0, R1, ...>(): tile tensor, output dim[i] = Dim[i] * R[i]
+    template<int ...Reps>
+    auto repeat() const {
+        static_assert(sizeof...(Reps) == dim(), "repeat: must specify all dims");
+        using rep_seq = detail::val_sequence<size_t, (size_t)Reps...>;
+        using new_seq = typename detail::multiply_dims<seq_t, rep_seq>::type;
+        using result_t = typename detail::seq_to_tensor<new_seq>::type;
+        return result_t{ t_.repeat({Reps...}) };
+    }
+
+    // expand<NewDims...>(): broadcast size-1 dims to new sizes
+    // Non-1 dims must match; size-1 dims can expand to any size
+    template<int ...NewDims>
+    auto expand() const {
+        static_assert(sizeof...(NewDims) == dim(), "expand: must specify all dims");
+        using new_seq = detail::val_sequence<size_t, (size_t)NewDims...>;
+        static_assert(detail::expand_validate<seq_t, new_seq>::value,
+            "expand: non-1 dims must match original shape");
+        using result_t = typename detail::seq_to_tensor<new_seq>::type;
+        return result_t{ t_.expand({NewDims...}) };
+    }
+
 private:
     void validate_raw_operand_shape(const torch::Tensor& other, const char* op) const {
         if (!other.sizes().equals(t_.sizes())) {
@@ -613,6 +705,21 @@ operator/(ftype f, Tensor<Dims...> t) {
 
 using Scalar = Tensor<>;
 
+// where: ternary select — condition ? self : other (all same shape)
+template<int ...Dims>
+Tensor<Dims...> where(Tensor<Dims...> condition, Tensor<Dims...> self, Tensor<Dims...> other) {
+    return { torch::where(condition.t(), self.t(), other.t()) };
+}
+
+// stack<Dim>(a, b): stack two same-shape tensors, inserting a new dim of size 2 at Dim
+template<size_t Dim, int ...Dims>
+auto stack(Tensor<Dims...> a, Tensor<Dims...> b) {
+    static_assert(Dim <= sizeof...(Dims), "stack: dim out of range");
+    using new_seq = typename detail::insert_dim<typename Tensor<Dims...>::seq_t, Dim, size_t(2)>::type;
+    using result_t = typename detail::seq_to_tensor<new_seq>::type;
+    return result_t{ torch::stack({a.t(), b.t()}, Dim) };
+}
+
 // eye<N>(): create an N×N identity matrix (square tensors only)
 template<int N>
 Tensor<N, N> eye() {
@@ -623,6 +730,38 @@ Tensor<N, N> eye() {
 template<int N>
 Tensor<N> linspace(float start, float end) {
     return Tensor<N>(torch::linspace(start, end, N));
+}
+
+// ---- Linear algebra free functions ----
+
+// mv: matrix-vector multiply — Tensor<M,N> × Tensor<N> → Tensor<M>
+template<int M, int N>
+Tensor<M> mv(Tensor<M, N> mat, Tensor<N> vec) {
+    return Tensor<M>{ torch::mv(mat.t(), vec.t()) };
+}
+
+// tril: lower triangular (shape-preserving, 2D)
+template<int M, int N>
+Tensor<M, N> tril(Tensor<M, N> input, int diagonal = 0) {
+    return { torch::tril(input.t(), diagonal) };
+}
+
+// triu: upper triangular (shape-preserving, 2D)
+template<int M, int N>
+Tensor<M, N> triu(Tensor<M, N> input, int diagonal = 0) {
+    return { torch::triu(input.t(), diagonal) };
+}
+
+// trace: Tensor<N,N> → Scalar
+template<int N>
+Tensor<> trace(Tensor<N, N> input) {
+    return { torch::trace(input.t()) };
+}
+
+// diagonal: Tensor<N,N> → Tensor<N> (extract main diagonal of square matrix)
+template<int N>
+Tensor<N> diagonal(Tensor<N, N> input) {
+    return { torch::diagonal(input.t()).contiguous() };
 }
 
 // ---- BatchTensor: a batch of identically-shaped tensors ----
@@ -791,6 +930,20 @@ struct BatchTensor {
     BatchTensor clone() const { return { t_.clone() }; }
     BatchTensor detach() const { return { t_.detach() }; }
     BatchTensor contiguous() const { return { t_.contiguous() }; }
+    bool is_contiguous() const { return t_.is_contiguous(); }
+
+    // masked_fill: fill elements where mask is true with value
+    BatchTensor masked_fill(BatchTensor<Dims...> mask, float value) const {
+        return { t_.masked_fill(mask.t(), value) };
+    }
+
+    // Autograd utilities
+    BatchTensor& requires_grad_(bool requires_grad = true) {
+        t_.requires_grad_(requires_grad);
+        return *this;
+    }
+    bool requires_grad() const { return t_.requires_grad(); }
+    BatchTensor grad() const { return { t_.grad() }; }
 
     // permute<P0, P1, ...>(): reorder mathematical dims (batch dim stays at 0)
     template<size_t ...P>
@@ -825,6 +978,20 @@ struct BatchTensor {
     template<int64_t ...FlipDims>
     BatchTensor flip() const {
         return { t_.flip({(FlipDims + 1)...}) };
+    }
+
+    // cumsum<D>() — shape-preserving cumulative sum along mathematical dimension D
+    template<int64_t D>
+    BatchTensor cumsum() const {
+        static_assert(D >= 0 && D < (int64_t)math_dim(), "cumsum: dim out of range");
+        return { t_.cumsum(D + 1) };
+    }
+
+    // cumprod<D>() — shape-preserving cumulative product along mathematical dimension D
+    template<int64_t D>
+    BatchTensor cumprod() const {
+        static_assert(D >= 0 && D < (int64_t)math_dim(), "cumprod: dim out of range");
+        return { t_.cumprod(D + 1) };
     }
 
     // Utility methods
@@ -906,6 +1073,12 @@ private:
 template<int B, int ...Dims>
 BatchTensor<Dims...> unbatch(Tensor<B, Dims...> t) {
     return BatchTensor<Dims...>(t.t());
+}
+
+// where: ternary select for BatchTensor
+template<int ...Dims>
+BatchTensor<Dims...> where(BatchTensor<Dims...> condition, BatchTensor<Dims...> self, BatchTensor<Dims...> other) {
+    return { torch::where(condition.t(), self.t(), other.t()) };
 }
 
 // Scalar * BatchTensor

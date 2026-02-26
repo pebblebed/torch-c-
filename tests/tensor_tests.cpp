@@ -3270,3 +3270,377 @@ TEST(BatchTensorTest, to_device_and_dtype) {
     ASSERT_EQ(d.batch_size(), 5);
     EXPECT_EQ(d.t().dtype(), torch::kDouble);
 }
+
+// ============================================================
+// Wave 3: Linear algebra and cumulative ops
+// ============================================================
+
+TEST(TensorTest, mv_basic) {
+    // M=3, N=4: ones(3,4) × ones(4) = 4*ones(3)
+    auto mat = Tensor<3, 4>::ones();
+    auto vec = Tensor<4>::ones();
+    auto result = mv(mat, vec);
+    EXPECT_TRUE(result.compare_sizes(torch::IntArrayRef{3}));
+    for (int i = 0; i < 3; ++i) {
+        EXPECT_FLOAT_EQ(result.data_ptr<float>()[i], 4.0f);
+    }
+}
+
+TEST(TensorTest, mv_identity) {
+    // eye(3) × [1,2,3] = [1,2,3]
+    auto mat = Tensor<3, 3>(torch::eye(3));
+    auto vec = Tensor<3>(torch::tensor({1.0f, 2.0f, 3.0f}));
+    auto result = mv(mat, vec);
+    EXPECT_TRUE(result.compare_sizes(torch::IntArrayRef{3}));
+    EXPECT_FLOAT_EQ(result.data_ptr<float>()[0], 1.0f);
+    EXPECT_FLOAT_EQ(result.data_ptr<float>()[1], 2.0f);
+    EXPECT_FLOAT_EQ(result.data_ptr<float>()[2], 3.0f);
+}
+
+TEST(TensorTest, tril_basic) {
+    auto t = Tensor<3, 3>::ones();
+    auto lower = tril(t);
+    EXPECT_TRUE(lower.compare_sizes(torch::IntArrayRef{3, 3}));
+    // Upper triangle should be zero
+    auto expected = torch::tril(torch::ones({3, 3}));
+    EXPECT_TRUE(torch::allclose(lower.t(), expected));
+}
+
+TEST(TensorTest, tril_with_diagonal) {
+    auto t = Tensor<3, 3>::ones();
+    auto lower = tril(t, 1);
+    auto expected = torch::tril(torch::ones({3, 3}), 1);
+    EXPECT_TRUE(torch::allclose(lower.t(), expected));
+}
+
+TEST(TensorTest, tril_nonsquare) {
+    auto t = Tensor<4, 3>::ones();
+    auto lower = tril(t);
+    EXPECT_TRUE(lower.compare_sizes(torch::IntArrayRef{4, 3}));
+    auto expected = torch::tril(torch::ones({4, 3}));
+    EXPECT_TRUE(torch::allclose(lower.t(), expected));
+}
+
+TEST(TensorTest, triu_basic) {
+    auto t = Tensor<3, 3>::ones();
+    auto upper = triu(t);
+    EXPECT_TRUE(upper.compare_sizes(torch::IntArrayRef{3, 3}));
+    auto expected = torch::triu(torch::ones({3, 3}));
+    EXPECT_TRUE(torch::allclose(upper.t(), expected));
+}
+
+TEST(TensorTest, triu_with_diagonal) {
+    auto t = Tensor<3, 3>::ones();
+    auto upper = triu(t, -1);
+    auto expected = torch::triu(torch::ones({3, 3}), -1);
+    EXPECT_TRUE(torch::allclose(upper.t(), expected));
+}
+
+TEST(TensorTest, trace_basic) {
+    // trace of identity = N
+    auto t = Tensor<3, 3>(torch::eye(3));
+    auto tr = trace(t);
+    ASSERT_EQ(tr.dim(), 0);
+    EXPECT_NEAR(tr.item<float>(), 3.0f, 1e-5f);
+}
+
+TEST(TensorTest, trace_values) {
+    // trace of [[1,2],[3,4]] = 1+4 = 5
+    auto t = Tensor<2, 2>(torch::tensor({{1.0f, 2.0f}, {3.0f, 4.0f}}));
+    auto tr = trace(t);
+    EXPECT_NEAR(tr.item<float>(), 5.0f, 1e-5f);
+}
+
+TEST(TensorTest, diagonal_basic) {
+    // diagonal of identity = ones
+    auto t = Tensor<3, 3>(torch::eye(3));
+    auto d = diagonal(t);
+    EXPECT_TRUE(d.compare_sizes(torch::IntArrayRef{3}));
+    for (int i = 0; i < 3; ++i) {
+        EXPECT_FLOAT_EQ(d.data_ptr<float>()[i], 1.0f);
+    }
+}
+
+TEST(TensorTest, diagonal_values) {
+    auto t = Tensor<2, 2>(torch::tensor({{1.0f, 2.0f}, {3.0f, 4.0f}}));
+    auto d = diagonal(t);
+    EXPECT_TRUE(d.compare_sizes(torch::IntArrayRef{2}));
+    EXPECT_FLOAT_EQ(d.data_ptr<float>()[0], 1.0f);
+    EXPECT_FLOAT_EQ(d.data_ptr<float>()[1], 4.0f);
+}
+
+TEST(TensorTest, cumsum_1d) {
+    auto t = Tensor<4>(torch::tensor({1.0f, 2.0f, 3.0f, 4.0f}));
+    auto cs = t.cumsum<0>();
+    EXPECT_TRUE(cs.compare_sizes(torch::IntArrayRef{4}));
+    EXPECT_FLOAT_EQ(cs.data_ptr<float>()[0], 1.0f);
+    EXPECT_FLOAT_EQ(cs.data_ptr<float>()[1], 3.0f);
+    EXPECT_FLOAT_EQ(cs.data_ptr<float>()[2], 6.0f);
+    EXPECT_FLOAT_EQ(cs.data_ptr<float>()[3], 10.0f);
+}
+
+TEST(TensorTest, cumsum_2d) {
+    auto t = Tensor<2, 3>(torch::tensor({{1.0f, 2.0f, 3.0f}, {4.0f, 5.0f, 6.0f}}));
+    // cumsum along dim 0
+    auto cs0 = t.cumsum<0>();
+    EXPECT_TRUE(cs0.compare_sizes(torch::IntArrayRef{2, 3}));
+    EXPECT_FLOAT_EQ(cs0.t().index({0, 0}).item<float>(), 1.0f);
+    EXPECT_FLOAT_EQ(cs0.t().index({1, 0}).item<float>(), 5.0f);  // 1+4
+    // cumsum along dim 1
+    auto cs1 = t.cumsum<1>();
+    EXPECT_TRUE(cs1.compare_sizes(torch::IntArrayRef{2, 3}));
+    EXPECT_FLOAT_EQ(cs1.t().index({0, 2}).item<float>(), 6.0f);  // 1+2+3
+}
+
+TEST(TensorTest, cumprod_1d) {
+    auto t = Tensor<4>(torch::tensor({1.0f, 2.0f, 3.0f, 4.0f}));
+    auto cp = t.cumprod<0>();
+    EXPECT_TRUE(cp.compare_sizes(torch::IntArrayRef{4}));
+    EXPECT_FLOAT_EQ(cp.data_ptr<float>()[0], 1.0f);
+    EXPECT_FLOAT_EQ(cp.data_ptr<float>()[1], 2.0f);
+    EXPECT_FLOAT_EQ(cp.data_ptr<float>()[2], 6.0f);
+    EXPECT_FLOAT_EQ(cp.data_ptr<float>()[3], 24.0f);
+}
+
+TEST(TensorTest, cumprod_2d) {
+    auto t = Tensor<2, 3>(torch::tensor({{1.0f, 2.0f, 3.0f}, {4.0f, 5.0f, 6.0f}}));
+    auto cp1 = t.cumprod<1>();
+    EXPECT_TRUE(cp1.compare_sizes(torch::IntArrayRef{2, 3}));
+    EXPECT_FLOAT_EQ(cp1.t().index({0, 2}).item<float>(), 6.0f);   // 1*2*3
+    EXPECT_FLOAT_EQ(cp1.t().index({1, 2}).item<float>(), 120.0f); // 4*5*6
+}
+
+TEST(BatchTensorTest, cumsum_basic) {
+    // BatchTensor<4> with batch_size=3
+    auto bt = BatchTensor<4>(torch::tensor({{1.0f, 2.0f, 3.0f, 4.0f},
+                                             {5.0f, 6.0f, 7.0f, 8.0f},
+                                             {1.0f, 1.0f, 1.0f, 1.0f}}));
+    auto cs = bt.cumsum<0>();
+    ASSERT_EQ(cs.batch_size(), 3);
+    // First batch element: cumsum([1,2,3,4]) = [1,3,6,10]
+    EXPECT_FLOAT_EQ(cs.t().index({0, 0}).item<float>(), 1.0f);
+    EXPECT_FLOAT_EQ(cs.t().index({0, 1}).item<float>(), 3.0f);
+    EXPECT_FLOAT_EQ(cs.t().index({0, 2}).item<float>(), 6.0f);
+    EXPECT_FLOAT_EQ(cs.t().index({0, 3}).item<float>(), 10.0f);
+}
+
+TEST(BatchTensorTest, cumprod_basic) {
+    auto bt = BatchTensor<3>(torch::tensor({{1.0f, 2.0f, 3.0f},
+                                             {2.0f, 3.0f, 4.0f}}));
+    auto cp = bt.cumprod<0>();
+    ASSERT_EQ(cp.batch_size(), 2);
+    EXPECT_FLOAT_EQ(cp.t().index({0, 0}).item<float>(), 1.0f);
+    EXPECT_FLOAT_EQ(cp.t().index({0, 1}).item<float>(), 2.0f);
+    EXPECT_FLOAT_EQ(cp.t().index({0, 2}).item<float>(), 6.0f);
+    EXPECT_FLOAT_EQ(cp.t().index({1, 2}).item<float>(), 24.0f);
+}
+
+// ============================================================
+// Wave 3: where, masked_fill, requires_grad
+// ============================================================
+
+TEST(TensorTest, where_selects_elements) {
+    auto cond = Tensor<2, 3>(torch::tensor({{1, 0, 1}, {0, 1, 0}}).to(torch::kBool));
+    auto a = Tensor<2, 3>::ones();
+    auto b = Tensor<2, 3>::zeroes();
+    auto result = where(cond, a, b);
+    EXPECT_TRUE(result.compare_sizes(torch::IntArrayRef{2, 3}));
+    auto expected = torch::tensor({{1.0f, 0.0f, 1.0f}, {0.0f, 1.0f, 0.0f}});
+    EXPECT_TRUE(torch::allclose(result.t(), expected));
+}
+
+TEST(TensorTest, masked_fill_fills_masked_positions) {
+    auto t = Tensor<2, 3>::ones();
+    auto mask = Tensor<2, 3>(torch::tensor({{1, 0, 1}, {0, 1, 0}}).to(torch::kBool));
+    auto result = t.masked_fill(mask, -1.0f);
+    EXPECT_TRUE(result.compare_sizes(torch::IntArrayRef{2, 3}));
+    auto expected = torch::tensor({{-1.0f, 1.0f, -1.0f}, {1.0f, -1.0f, 1.0f}});
+    EXPECT_TRUE(torch::allclose(result.t(), expected));
+}
+
+TEST(TensorTest, requires_grad_enables_tracking) {
+    auto t = Tensor<2, 3>(torch::ones({2, 3}));
+    EXPECT_FALSE(t.requires_grad());
+    t.requires_grad_(true);
+    EXPECT_TRUE(t.requires_grad());
+    t.requires_grad_(false);
+    EXPECT_FALSE(t.requires_grad());
+}
+
+TEST(TensorTest, grad_returns_correct_shape) {
+    auto t = Tensor<2, 3>(torch::ones({2, 3}, torch::requires_grad()));
+    auto loss = t.sum();
+    loss.t().backward();
+    auto g = t.grad();
+    EXPECT_TRUE(g.compare_sizes(torch::IntArrayRef{2, 3}));
+    // Gradient of sum w.r.t. input is all ones
+    EXPECT_TRUE(torch::allclose(g.t(), torch::ones({2, 3})));
+}
+
+TEST(TensorTest, is_contiguous) {
+    auto t = Tensor<2, 3>::randn();
+    EXPECT_TRUE(t.is_contiguous());
+    // Transpose makes non-contiguous
+    auto tr = t.transpose<0, 1>();
+    EXPECT_FALSE(tr.is_contiguous());
+    auto c = tr.contiguous();
+    EXPECT_TRUE(c.is_contiguous());
+}
+
+// ---- BatchTensor variants ----
+
+TEST(BatchTensorTest, where_selects_elements) {
+    auto cond = BatchTensor<3>(torch::tensor({{1, 0, 1}, {0, 1, 0}}).to(torch::kBool));
+    auto a = BatchTensor<3>::ones(2);
+    auto b = BatchTensor<3>::zeroes(2);
+    auto result = where(cond, a, b);
+    EXPECT_EQ(result.batch_size(), 2);
+    auto expected = torch::tensor({{1.0f, 0.0f, 1.0f}, {0.0f, 1.0f, 0.0f}});
+    EXPECT_TRUE(torch::allclose(result.t(), expected));
+}
+
+TEST(BatchTensorTest, masked_fill_fills_masked_positions) {
+    auto bt = BatchTensor<3>::ones(2);
+    auto mask = BatchTensor<3>(torch::tensor({{1, 0, 1}, {0, 1, 0}}).to(torch::kBool));
+    auto result = bt.masked_fill(mask, -1.0f);
+    EXPECT_EQ(result.batch_size(), 2);
+    auto expected = torch::tensor({{-1.0f, 1.0f, -1.0f}, {1.0f, -1.0f, 1.0f}});
+    EXPECT_TRUE(torch::allclose(result.t(), expected));
+}
+
+TEST(BatchTensorTest, requires_grad_enables_tracking) {
+    auto bt = BatchTensor<3>(torch::ones({2, 3}));
+    EXPECT_FALSE(bt.requires_grad());
+    bt.requires_grad_(true);
+    EXPECT_TRUE(bt.requires_grad());
+    bt.requires_grad_(false);
+    EXPECT_FALSE(bt.requires_grad());
+}
+
+TEST(BatchTensorTest, grad_returns_correct_shape) {
+    auto bt = BatchTensor<3>(torch::ones({2, 3}, torch::requires_grad()));
+    auto loss = bt.sum();
+    loss.t().backward();
+    auto g = bt.grad();
+    EXPECT_EQ(g.batch_size(), 2);
+    EXPECT_TRUE(torch::allclose(g.t(), torch::ones({2, 3})));
+}
+
+TEST(BatchTensorTest, is_contiguous) {
+    auto bt = BatchTensor<3, 4>::randn(2);
+    EXPECT_TRUE(bt.is_contiguous());
+    auto tr = bt.transpose<0, 1>();
+    EXPECT_FALSE(tr.is_contiguous());
+    auto c = tr.contiguous();
+    EXPECT_TRUE(c.is_contiguous());
+}
+
+// ============================================================
+// Wave 3: chunk, stack, repeat, expand
+// ============================================================
+
+TEST(TensorTest, chunk_2d_dim0) {
+    // Tensor<6, 4> chunk<2, 0> -> two Tensor<3, 4>
+    auto t = Tensor<6, 4>::arange();
+    auto [a, b] = t.chunk<2, 0>();
+    EXPECT_TRUE(a.compare_sizes(torch::IntArrayRef{3, 4}));
+    EXPECT_TRUE(b.compare_sizes(torch::IntArrayRef{3, 4}));
+    // First chunk has first 3 rows, second has last 3
+    EXPECT_FLOAT_EQ(a.data_ptr<float>()[0], 0.0f);
+    EXPECT_FLOAT_EQ(b.data_ptr<float>()[0], 12.0f);
+}
+
+TEST(TensorTest, chunk_2d_dim1) {
+    // Tensor<3, 6> chunk<3, 1> -> three Tensor<3, 2>
+    auto t = Tensor<3, 6>::arange();
+    auto [a, b, c] = t.chunk<3, 1>();
+    EXPECT_TRUE(a.compare_sizes(torch::IntArrayRef{3, 2}));
+    EXPECT_TRUE(b.compare_sizes(torch::IntArrayRef{3, 2}));
+    EXPECT_TRUE(c.compare_sizes(torch::IntArrayRef{3, 2}));
+}
+
+TEST(TensorTest, chunk_3d) {
+    // Tensor<4, 6, 8> chunk<2, 1> -> two Tensor<4, 3, 8>
+    auto t = Tensor<4, 6, 8>::randn();
+    auto [a, b] = t.chunk<2, 1>();
+    EXPECT_TRUE(a.compare_sizes(torch::IntArrayRef{4, 3, 8}));
+    EXPECT_TRUE(b.compare_sizes(torch::IntArrayRef{4, 3, 8}));
+}
+
+TEST(TensorTest, stack_dim0) {
+    // Stack two Tensor<3, 4> at dim 0 -> Tensor<2, 3, 4>
+    auto a = Tensor<3, 4>::ones();
+    auto b = Tensor<3, 4>::zeroes();
+    auto s = stack<0>(a, b);
+    EXPECT_TRUE(s.compare_sizes(torch::IntArrayRef{2, 3, 4}));
+    // s[0] should be ones, s[1] should be zeros
+    EXPECT_FLOAT_EQ(s.t().index({0, 0, 0}).item<float>(), 1.0f);
+    EXPECT_FLOAT_EQ(s.t().index({1, 0, 0}).item<float>(), 0.0f);
+}
+
+TEST(TensorTest, stack_dim1) {
+    // Stack two Tensor<3, 4> at dim 1 -> Tensor<3, 2, 4>
+    auto a = Tensor<3, 4>::ones();
+    auto b = Tensor<3, 4>::zeroes();
+    auto s = stack<1>(a, b);
+    EXPECT_TRUE(s.compare_sizes(torch::IntArrayRef{3, 2, 4}));
+}
+
+TEST(TensorTest, stack_dim_end) {
+    // Stack two Tensor<3, 4> at dim 2 (end) -> Tensor<3, 4, 2>
+    auto a = Tensor<3, 4>::ones();
+    auto b = Tensor<3, 4>::zeroes();
+    auto s = stack<2>(a, b);
+    EXPECT_TRUE(s.compare_sizes(torch::IntArrayRef{3, 4, 2}));
+}
+
+TEST(TensorTest, repeat_1d) {
+    // Tensor<3> repeat<4> -> Tensor<12>
+    auto t = Tensor<3>(torch::tensor({1.0f, 2.0f, 3.0f}));
+    auto r = t.repeat<4>();
+    EXPECT_TRUE(r.compare_sizes(torch::IntArrayRef{12}));
+    EXPECT_FLOAT_EQ(r.data_ptr<float>()[0], 1.0f);
+    EXPECT_FLOAT_EQ(r.data_ptr<float>()[3], 1.0f);
+}
+
+TEST(TensorTest, repeat_2d) {
+    // Tensor<2, 3> repeat<3, 2> -> Tensor<6, 6>
+    auto t = Tensor<2, 3>::ones();
+    auto r = t.repeat<3, 2>();
+    EXPECT_TRUE(r.compare_sizes(torch::IntArrayRef{6, 6}));
+}
+
+TEST(TensorTest, repeat_3d) {
+    // Tensor<2, 3, 4> repeat<1, 2, 3> -> Tensor<2, 6, 12>
+    auto t = Tensor<2, 3, 4>::randn();
+    auto r = t.repeat<1, 2, 3>();
+    EXPECT_TRUE(r.compare_sizes(torch::IntArrayRef{2, 6, 12}));
+}
+
+TEST(TensorTest, expand_1dim) {
+    // Tensor<1, 4> expand<3, 4> -> Tensor<3, 4>
+    auto t = Tensor<1, 4>::ones();
+    auto e = t.expand<3, 4>();
+    EXPECT_TRUE(e.compare_sizes(torch::IntArrayRef{3, 4}));
+    // All values should be 1 (broadcast of ones)
+    for (int i = 0; i < e.numel(); ++i) {
+        EXPECT_FLOAT_EQ(e.data_ptr<float>()[i], 1.0f);
+    }
+}
+
+TEST(TensorTest, expand_multiple) {
+    // Tensor<1, 3, 1> expand<4, 3, 5> -> Tensor<4, 3, 5>
+    auto t = Tensor<1, 3, 1>::randn();
+    auto e = t.expand<4, 3, 5>();
+    EXPECT_TRUE(e.compare_sizes(torch::IntArrayRef{4, 3, 5}));
+}
+
+TEST(TensorTest, expand_noop) {
+    // Tensor<2, 3> expand<2, 3> -> Tensor<2, 3> (no change)
+    auto t = Tensor<2, 3>::arange();
+    auto e = t.expand<2, 3>();
+    EXPECT_TRUE(e.compare_sizes(torch::IntArrayRef{2, 3}));
+    for (int i = 0; i < t.numel(); ++i) {
+        EXPECT_FLOAT_EQ(e.data_ptr<float>()[i], t.data_ptr<float>()[i]);
+    }
+}
