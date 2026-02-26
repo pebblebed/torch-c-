@@ -47,12 +47,18 @@ Date: 2026-02-26
   - `charformer.hpp:54`
   - `tests/charformer_tests.cpp:82`
 
-- [ ] `HIGH` Harden device handling for inference/training paths.
-  `forward(std::string)` creates CPU tensors regardless of model device; demo hard-forces `.mps()` without fallback.
+- [x] `HIGH` Harden device handling for inference/training paths.
+  `forward(std::string)` now builds tensors on the model's active device, model `.mps()`/`.cuda()` calls no longer hard-fail when backends are unavailable, and demo/device selection uses best-available fallback.
+  Resolution: added `best_available_device()` / `module_device()` / `move_to_best_available_device()`, guarded accelerator moves across model blocks, and fixed string-byte conversion to avoid negative indices for extended bytes.
+  Regression tests:
+  - `CharformerTests.CharFormerMpsFallbackWhenUnavailable`
+  - `CharformerTests.CharFormerStringForwardExtendedBytes`
   Files:
-  - `charformer.hpp:215`
-  - `charformer.hpp:225`
-  - `demos/charformer-shakespeare.cpp:291`
+  - `charformer.hpp:33`
+  - `charformer.hpp:65`
+  - `charformer.hpp:262`
+  - `demos/charformer-shakespeare.cpp:288`
+  - `tests/charformer_tests.cpp:89`
 
 - [ ] `MEDIUM` Replace release-stripped `assert` checks with runtime validation for critical paths.
   Files:

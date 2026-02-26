@@ -86,6 +86,29 @@ TEST(CharformerTests, ResNormExposesChildParameters) {
     EXPECT_EQ(block.parameters().size(), 3u);
 }
 
+TEST(CharformerTests, CharFormerMpsFallbackWhenUnavailable) {
+    if (torch::mps::is_available()) {
+        GTEST_SKIP() << "MPS is available; fallback behavior is only meaningful on non-MPS hosts";
+    }
+    CharFormer<8, 256, 32, 2, 64, 2> model;
+    EXPECT_NO_THROW(model.mps());
+}
+
+TEST(CharformerTests, CharFormerStringForwardExtendedBytes) {
+    torch::NoGradGuard no_grad;
+    CharFormer<8, 256, 32, 2, 64, 2> model;
+    std::string s;
+    s.push_back(static_cast<char>(0xFF));
+    s.push_back(static_cast<char>(0x80));
+    s.push_back(static_cast<char>(0x01));
+    EXPECT_NO_THROW({
+        auto y = model.forward(s);
+        EXPECT_EQ(y.batch_size(), 1);
+        EXPECT_EQ(y.t().size(1), 8);
+        EXPECT_EQ(y.t().size(2), 256);
+    });
+}
+
 TEST(CharformerTests, SelfAttention) {
     // Use batch-agnostic trails::nn::MultiHeadAttention<NumHeads, ModelDim>
     constexpr int B = 3;

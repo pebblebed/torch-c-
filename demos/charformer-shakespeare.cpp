@@ -285,13 +285,16 @@ int main(int argc, char* argv[]) {
 
     // 2. Create model and run
     if (model_type == "transformer") {
-        auto model = CharFormer<SeqLen, VocabSize, ModelDim, NumHeads, FFDim, NLayers>().mps();
+        auto model = CharFormer<SeqLen, VocabSize, ModelDim, NumHeads, FFDim, NLayers>();
+        move_to_best_available_device(model);
         run(model);
     } else if (model_type == "rnn") {
-        auto model = CharRNN<SeqLen, VocabSize, ModelDim, NLayers>().mps();
+        auto model = CharRNN<SeqLen, VocabSize, ModelDim, NLayers>();
+        move_to_best_available_device(model);
         run(model);
     } else if (model_type == "gru") {
-        auto model = CharGRU<SeqLen, VocabSize, ModelDim, NLayers>().mps();
+        auto model = CharGRU<SeqLen, VocabSize, ModelDim, NLayers>();
+        move_to_best_available_device(model);
         run(model);
     }
 

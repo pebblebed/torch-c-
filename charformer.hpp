@@ -2,6 +2,7 @@
 #include <array>
 #include <cassert>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <torch/torch.h>
 #include "trails/trails.hpp"
@@ -29,6 +30,30 @@ inline torch::Tensor language_model_loss(torch::Tensor log_probs, torch::Tensor 
     return torch::nn::functional::nll_loss(flat_log_probs, flat_targets);
 }
 
+inline torch::Device best_available_device() {
+    if (torch::cuda::is_available()) {
+        return torch::Device(torch::kCUDA);
+    }
+    if (torch::mps::is_available()) {
+        return torch::Device(torch::kMPS);
+    }
+    return torch::Device(torch::kCPU);
+}
+
+inline torch::Device module_device(const torch::nn::Module& module) {
+    auto params = module.parameters();
+    if (!params.empty()) {
+        return params.front().device();
+    }
+    return torch::Device(torch::kCPU);
+}
+
+template<typename ModuleT>
+ModuleT& move_to_best_available_device(ModuleT& module) {
+    module.to(best_available_device());
+    return module;
+}
+
 template<int ...Dims>
 class RMSNorm : public torch::nn::Module {
     torch::Tensor gamma_;
@@ -37,8 +62,8 @@ public:
     RMSNorm()
     : gamma_(torch::nn::Module::register_parameter("gamma", torch::ones({Dims...}))) {}
 
-    auto& cuda() { this->to(torch::kCUDA); return *this; }
-    auto& mps() { this->to(torch::kMPS); return *this; }
+    auto& cuda() { if (torch::cuda::is_available()) this->to(torch::kCUDA); return *this; }
+    auto& mps() { if (torch::mps::is_available()) this->to(torch::kMPS); return *this; }
 
     TensorType forward(TensorType x) {
         auto xt = x.t();
@@ -73,8 +98,8 @@ public:
         register_module("norm", norm);
     }
 
-    auto& cuda() { this->to(torch::kCUDA); return *this; }
-    auto& mps() { this->to(torch::kMPS); return *this; }
+    auto& cuda() { if (torch::cuda::is_available()) this->to(torch::kCUDA); return *this; }
+    auto& mps() { if (torch::mps::is_available()) this->to(torch::kMPS); return *this; }
 
     template<typename T>
     T forward(T x) {
@@ -104,8 +129,8 @@ public:
     , b2(torch::nn::Module::register_parameter("b2", Tensor<ModelDim>::randn().t()))
     {}
 
-    auto& cuda() { this->to(torch::kCUDA); return *this; }
-    auto& mps() { this->to(torch::kMPS); return *this; }
+    auto& cuda() { if (torch::cuda::is_available()) this->to(torch::kCUDA); return *this; }
+    auto& mps() { if (torch::mps::is_available()) this->to(torch::kMPS); return *this; }
 
     InputType forward(InputType x) {
         auto h = trails::functional::linear(x, w1, std::optional{b1});
@@ -141,8 +166,8 @@ public:
         register_module("ln2", ln2);
     }
 
-    auto& cuda() { this->to(torch::kCUDA); return *this; }
-    auto& mps() { this->to(torch::kMPS); return *this; }
+    auto& cuda() { if (torch::cuda::is_available()) this->to(torch::kCUDA); return *this; }
+    auto& mps() { if (torch::mps::is_available()) this->to(torch::kMPS); return *this; }
 
     InputType forward(InputType x) {
         // Self-attention sublayer with residual + LayerNorm
@@ -212,8 +237,8 @@ public:
         }
     }
 
-    auto& cuda() { this->to(torch::kCUDA); return *this; }
-    auto& mps() { this->to(torch::kMPS); return *this; }
+    auto& cuda() { if (torch::cuda::is_available()) this->to(torch::kCUDA); return *this; }
+    auto& mps() { if (torch::mps::is_available()) this->to(torch::kMPS); return *this; }
 
     OutputType forward(InputType x) {
         // Embedding: BatchTensor<SeqLen> -> BatchTensor<SeqLen, ModelDim>
@@ -235,8 +260,12 @@ public:
     }
 
     OutputType forward(std::string s) {
-        std::vector<int64_t> bytes(s.begin(), s.end());
-        auto t = torch::tensor(bytes, torch::dtype(torch::kLong));
+        std::vector<int64_t> bytes;
+        bytes.reserve(s.size());
+        for (unsigned char ch : s) {
+            bytes.push_back(static_cast<int64_t>(ch));
+        }
+        auto t = torch::tensor(bytes, torch::TensorOptions().dtype(torch::kLong).device(module_device(*this)));
         // Add a batch dimension and pad/truncate to SeqLen
         t = t.unsqueeze(0);
         // Ensure correct sequence length
@@ -276,8 +305,8 @@ public:
         register_module("rnn", rnn);
     }
 
-    auto& cuda() { this->to(torch::kCUDA); return *this; }
-    auto& mps() { this->to(torch::kMPS); return *this; }
+    auto& cuda() { if (torch::cuda::is_available()) this->to(torch::kCUDA); return *this; }
+    auto& mps() { if (torch::mps::is_available()) this->to(torch::kMPS); return *this; }
 
     OutputType forward(InputType x) {
         auto z = emb->template forward<SeqLen>(x);
@@ -313,8 +342,8 @@ public:
         register_module("gru", gru);
     }
 
-    auto& cuda() { this->to(torch::kCUDA); return *this; }
-    auto& mps() { this->to(torch::kMPS); return *this; }
+    auto& cuda() { if (torch::cuda::is_available()) this->to(torch::kCUDA); return *this; }
+    auto& mps() { if (torch::mps::is_available()) this->to(torch::kMPS); return *this; }
 
     OutputType forward(InputType x) {
         auto z = emb->template forward<SeqLen>(x);
