@@ -208,6 +208,12 @@ struct replace_dim {
     using type = typename Seq::template set_dim<Pos, NewVal>::type;
 };
 
+// permute_dims<Seq, P...>: reorder dimensions according to permutation indices P...
+template<typename Seq, size_t ...P>
+struct permute_dims {
+    using type = val_sequence<size_t, Seq::template get<P>::value...>;
+};
+
 } // namespace detail
 
 // Forward declarations
@@ -287,6 +293,18 @@ struct Tensor {
         return Tensor(torch::ones({Dims...}));
     }
 
+    static Tensor full(float value) {
+        return Tensor(torch::full({Dims...}, value));
+    }
+
+    static Tensor empty() {
+        return Tensor(torch::empty({Dims...}));
+    }
+
+    static Tensor rand() {
+        return Tensor(torch::rand({Dims...}));
+    }
+
     static bool compare_sizes(torch::IntArrayRef sizes) {
         if (seq_t::length != sizes.size()) {
             return false;
@@ -296,6 +314,9 @@ struct Tensor {
  
     Tensor cuda() { return { t_.cuda() }; }
     Tensor mps() { return { t_.to(torch::kMPS) }; }
+    Tensor to(torch::Device device) const { return { t_.to(device) }; }
+    Tensor to(torch::ScalarType dtype) const { return { t_.to(dtype) }; }
+    Tensor to(torch::Device device, torch::ScalarType dtype) const { return { t_.to(device, dtype) }; }
     template<typename T=float>
     T item() const {
         return t_.item<T>();
@@ -311,6 +332,27 @@ struct Tensor {
     Tensor<> any() { return { t_.any() }; }
     Tensor<> all() { return { t_.all() }; }
     Tensor<> norm(float p = 2.0f) { return { t_.norm(p) }; }
+
+    // argmax / argmin — scalar (global) versions
+    Tensor<> argmax() const { return { t_.argmax() }; }
+    Tensor<> argmin() const { return { t_.argmin() }; }
+
+    // argmax / argmin — dim version: removes dimension D from shape
+    template<size_t D>
+    auto argmax() const {
+        static_assert(D < dim(), "argmax: dim out of range");
+        using new_seq = typename detail::remove_dim<seq_t, D>::type;
+        using result_t = typename detail::seq_to_tensor<new_seq>::type;
+        return result_t{ t_.argmax(D) };
+    }
+
+    template<size_t D>
+    auto argmin() const {
+        static_assert(D < dim(), "argmin: dim out of range");
+        using new_seq = typename detail::remove_dim<seq_t, D>::type;
+        using result_t = typename detail::seq_to_tensor<new_seq>::type;
+        return result_t{ t_.argmin(D) };
+    }
 
     template<bool keepdim=false, int64_t ...reduceDims>
     detail::ReduceDims<Tensor, keepdim, reduceDims...>::tensor_t mean() {
@@ -496,6 +538,41 @@ struct Tensor {
         return result_t{ t_ };
     }
 
+    // permute<P0, P1, ...>(): generalized transpose — reorder ALL dimensions
+    template<size_t ...P>
+    auto permute() const {
+        static_assert(sizeof...(P) == dim(), "permute: must specify all dims");
+        using new_seq = typename detail::permute_dims<seq_t, P...>::type;
+        using result_t = typename detail::seq_to_tensor<new_seq>::type;
+        return result_t{ t_.permute({static_cast<int64_t>(P)...}) };
+    }
+
+    // select<D>(index): remove dimension D by indexing at runtime index
+    template<size_t D>
+    auto select(int64_t index) const {
+        static_assert(D < dim(), "select: dim out of range");
+        using new_seq = typename detail::remove_dim<seq_t, D>::type;
+        using result_t = typename detail::seq_to_tensor<new_seq>::type;
+        return result_t{ t_.select(D, index) };
+    }
+
+    // narrow<Dim, Start, Length>(): compile-time slice along a dimension
+    template<size_t Dim, int Start, int Length>
+    auto narrow() const {
+        static_assert(Dim < dim(), "narrow: dim out of range");
+        static_assert(Start >= 0 && Start + Length <= (int)seq_t::template get<Dim>::value,
+            "narrow: range out of bounds");
+        using new_seq = typename detail::replace_dim<seq_t, Dim, (size_t)Length>::type;
+        using result_t = typename detail::seq_to_tensor<new_seq>::type;
+        return result_t{ t_.narrow(Dim, Start, Length) };
+    }
+
+    // flip<Dims...>(): reverse data along given dims (shape-preserving)
+    template<int64_t ...FlipDims>
+    Tensor flip() const {
+        return { t_.flip({FlipDims...}) };
+    }
+
 private:
     void validate_raw_operand_shape(const torch::Tensor& other, const char* op) const {
         if (!other.sizes().equals(t_.sizes())) {
@@ -535,6 +612,18 @@ operator/(ftype f, Tensor<Dims...> t) {
 }
 
 using Scalar = Tensor<>;
+
+// eye<N>(): create an N×N identity matrix (square tensors only)
+template<int N>
+Tensor<N, N> eye() {
+    return Tensor<N, N>(torch::eye(N));
+}
+
+// linspace<N>(start, end): create a 1D tensor of N evenly-spaced values
+template<int N>
+Tensor<N> linspace(float start, float end) {
+    return Tensor<N>(torch::linspace(start, end, N));
+}
 
 // ---- BatchTensor: a batch of identically-shaped tensors ----
 // BatchTensor<Dims...> represents N independent Tensor<Dims...> objects.
@@ -703,6 +792,41 @@ struct BatchTensor {
     BatchTensor detach() const { return { t_.detach() }; }
     BatchTensor contiguous() const { return { t_.contiguous() }; }
 
+    // permute<P0, P1, ...>(): reorder mathematical dims (batch dim stays at 0)
+    template<size_t ...P>
+    auto permute() const {
+        static_assert(sizeof...(P) == math_dim(), "permute: must specify all math dims");
+        using new_seq = typename detail::permute_dims<seq_t, P...>::type;
+        using result_t = typename detail::seq_to_batch_tensor<new_seq>::type;
+        return result_t{ t_.permute({0, static_cast<int64_t>(P + 1)...}) };
+    }
+
+    // select<D>(index): remove mathematical dimension D by indexing
+    template<size_t D>
+    auto select(int64_t index) const {
+        static_assert(D < math_dim(), "select: dim out of range");
+        using new_seq = typename detail::remove_dim<seq_t, D>::type;
+        using result_t = typename detail::seq_to_batch_tensor<new_seq>::type;
+        return result_t{ t_.select(D + 1, index) };
+    }
+
+    // narrow<Dim, Start, Length>(): compile-time slice along a mathematical dimension
+    template<size_t Dim, int Start, int Length>
+    auto narrow() const {
+        static_assert(Dim < math_dim(), "narrow: dim out of range");
+        static_assert(Start >= 0 && Start + Length <= (int)seq_t::template get<Dim>::value,
+            "narrow: range out of bounds");
+        using new_seq = typename detail::replace_dim<seq_t, Dim, (size_t)Length>::type;
+        using result_t = typename detail::seq_to_batch_tensor<new_seq>::type;
+        return result_t{ t_.narrow(Dim + 1, Start, Length) };
+    }
+
+    // flip<Dims...>(): reverse data along given mathematical dims (shape-preserving)
+    template<int64_t ...FlipDims>
+    BatchTensor flip() const {
+        return { t_.flip({(FlipDims + 1)...}) };
+    }
+
     // Utility methods
     std::string str() const {
         std::stringstream ss;
@@ -723,6 +847,27 @@ struct BatchTensor {
     Tensor<> all() const { return { t_.all() }; }
     Tensor<> norm(float p = 2.0f) const { return { t_.norm(p) }; }
 
+    // argmax / argmin — scalar (global) versions
+    Tensor<> argmax() const { return { t_.argmax() }; }
+    Tensor<> argmin() const { return { t_.argmin() }; }
+
+    // argmax / argmin — dim version: reduces math dim D (offset by 1 for batch)
+    template<size_t D>
+    auto argmax() const {
+        static_assert(D < math_dim(), "argmax: dim out of range");
+        using new_seq = typename detail::remove_dim<seq_t, D>::type;
+        using result_t = typename detail::seq_to_batch_tensor<new_seq>::type;
+        return result_t{ t_.argmax(D + 1) };
+    }
+
+    template<size_t D>
+    auto argmin() const {
+        static_assert(D < math_dim(), "argmin: dim out of range");
+        using new_seq = typename detail::remove_dim<seq_t, D>::type;
+        using result_t = typename detail::seq_to_batch_tensor<new_seq>::type;
+        return result_t{ t_.argmin(D + 1) };
+    }
+
     // Static factory methods with runtime batch size
     static BatchTensor randn(int batch_size) {
         return { torch::randn({batch_size, Dims...}) };
@@ -733,6 +878,20 @@ struct BatchTensor {
     static BatchTensor ones(int batch_size) {
         return { torch::ones({batch_size, Dims...}) };
     }
+    static BatchTensor full(int batch_size, float value) {
+        return { torch::full({batch_size, Dims...}, value) };
+    }
+    static BatchTensor empty(int batch_size) {
+        return { torch::empty({batch_size, Dims...}) };
+    }
+    static BatchTensor rand(int batch_size) {
+        return { torch::rand({batch_size, Dims...}) };
+    }
+
+    // Device/dtype transfer (shape-preserving)
+    BatchTensor to(torch::Device device) const { return { t_.to(device) }; }
+    BatchTensor to(torch::ScalarType dtype) const { return { t_.to(dtype) }; }
+    BatchTensor to(torch::Device device, torch::ScalarType dtype) const { return { t_.to(device, dtype) }; }
 
     friend std::ostream& operator<<(std::ostream& os, const BatchTensor& bt) {
         os << "BatchTensor[B=" << bt.batch_size() << "] " << bt.t_;
