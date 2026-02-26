@@ -26,6 +26,22 @@ struct ScopedTempFile {
     }
 };
 
+struct ScopedTempDir {
+    std::filesystem::path path;
+
+    ScopedTempDir() {
+        auto base = std::filesystem::temp_directory_path();
+        path = base / std::filesystem::path("trails_dataset_dir_test_" + std::to_string(::getpid()));
+        std::filesystem::remove_all(path);
+        std::filesystem::create_directories(path);
+    }
+
+    ~ScopedTempDir() {
+        std::error_code ec;
+        std::filesystem::remove_all(path, ec);
+    }
+};
+
 } // namespace
 
 TEST(DatasetFileTests, ExactContextLengthProvidesSingleExample) {
@@ -58,4 +74,28 @@ TEST(MMappedFileTests, MissingPathPreservesOpenErrorMessage) {
         auto message = std::string(e.what());
         EXPECT_NE(message.find(std::strerror(ENOENT)), std::string::npos);
     }
+}
+
+TEST(DatasetDirTests, NestedTraversalAccumulatesAllSubdirectories) {
+    ScopedTempDir temp_dir;
+    auto sub_a = temp_dir.path / "a";
+    auto sub_b = temp_dir.path / "b";
+    std::filesystem::create_directories(sub_a);
+    std::filesystem::create_directories(sub_b);
+
+    {
+        std::ofstream out(sub_a / "data_a.bin", std::ios::binary | std::ios::trunc);
+        const std::string bytes = "ABCDE"; // len=5 => windows(len,n_ctx=3)=3
+        out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    }
+    {
+        std::ofstream out(sub_b / "data_b.bin", std::ios::binary | std::ios::trunc);
+        const std::string bytes = "ABCDEFG"; // len=7 => windows(len,n_ctx=3)=5
+        out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    }
+
+    trainium::DatasetDir dataset(temp_dir.path.string(), /*batch_size=*/1, /*n_ctx=*/3);
+    auto sz = dataset.size();
+    ASSERT_TRUE(sz.has_value());
+    EXPECT_EQ(sz.value(), 8u);
 }

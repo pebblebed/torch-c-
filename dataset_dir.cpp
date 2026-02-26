@@ -59,13 +59,12 @@ torch::optional<size_t> DatasetFile::size() const {
 }
 
 DatasetDir::DatasetDir(const std::string& path, size_t batch_size, size_t n_ctx)
-: batch_size(batch_size), n_ctx(n_ctx) {
+: total_size(0), batch_size(batch_size), n_ctx(n_ctx) {
     traverse(path);
     std::cerr << "Found " << files.size() << " files" << std::endl;
 }
 
 void DatasetDir::traverse(const std::string& path) {
-    total_size = 0;
     for (const auto& entry : std::filesystem::directory_iterator(path)) {
         if (entry.is_regular_file()) {
             auto file = DatasetFile { entry.path().string(), batch_size, n_ctx };

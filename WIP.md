@@ -31,10 +31,13 @@ Date: 2026-02-26
   - `dataset_dir.hpp:50`
   - `tests/dataset_tests.cpp:49`
 
-- [ ] `HIGH` Fix dataset directory traversal accounting.
+- [x] `HIGH` Fix dataset directory traversal accounting.
   Recursive `traverse()` resets `total_size`, corrupting aggregate dataset size.
+  Resolution: initialize `total_size` once in constructor and remove recursive resets; added regression coverage for sibling subdirectory accumulation.
   Files:
-  - `dataset_dir.cpp:56`
+  - `dataset_dir.cpp:49`
+  - `dataset_dir.cpp:55`
+  - `tests/dataset_tests.cpp:79`
 
 - [ ] `HIGH` Register submodules inside `ResNorm`.
   `layer` and `norm` are not registered as submodules, which can hide parameters from optimizers/checkpointing.
