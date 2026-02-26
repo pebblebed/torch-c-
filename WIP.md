@@ -81,11 +81,20 @@ Date: 2026-02-26
   - `tests/tensor_tests.cpp:716`
   - `tests/tensor_tests.cpp:2121`
 
-- [ ] `MEDIUM` Improve production-readiness test strategy.
-  Existing tests are broad, but accelerator tests are skipped without hardware and there is no soak/fault-injection coverage.
+- [x] `MEDIUM` Improve production-readiness test strategy.
+  Resolution: added non-skipping accelerator contract tests that run on any host and assert Torch-consistent behavior (throw when backend unavailable, move parameters when available).
+  Regression tests:
+  - `BatchAgnosticTest.LinearCudaMatchesTorchAvailabilityContract`
+  - `BatchAgnosticTest.LinearMpsMatchesTorchAvailabilityContract`
   Files:
-  - `tests/charformer_tests.cpp:292`
-  - `tests/charformer_tests.cpp:336`
+  - `tests/tensor_tests.cpp:2371`
+  - `tests/tensor_tests.cpp:2383`
+
+- [ ] `MEDIUM` Add soak/fault-injection coverage for long-running reliability.
+  Current suite is broad but still lacks long-horizon stress and injected-failure scenarios (OOM/device reset/restart/retry paths).
+  Files:
+  - `tests/charformer_tests.cpp:352`
+  - `tests/tensor_tests.cpp:2357`
 
 - [ ] `LOW` Fix format-specifier mismatches in debug utility logging.
   Build emits warnings because `%zu` is used with `int64_t` values from LibTorch tensor dimensions/sizes.

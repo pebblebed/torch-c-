@@ -2368,6 +2368,30 @@ TEST(BatchTensorOpsTest, Cuda) {
     }
 }
 
+TEST(BatchAgnosticTest, LinearCudaMatchesTorchAvailabilityContract) {
+    trails::nn::Linear<8, 16> linear;
+    if (torch::cuda::is_available()) {
+        EXPECT_NO_THROW(linear.cuda());
+        for (const auto& p : linear.parameters()) {
+            EXPECT_TRUE(p.is_cuda());
+        }
+    } else {
+        EXPECT_THROW(linear.cuda(), c10::Error);
+    }
+}
+
+TEST(BatchAgnosticTest, LinearMpsMatchesTorchAvailabilityContract) {
+    trails::nn::Linear<8, 16> linear;
+    if (torch::mps::is_available()) {
+        EXPECT_NO_THROW(linear.mps());
+        for (const auto& p : linear.parameters()) {
+            EXPECT_TRUE(p.is_mps());
+        }
+    } else {
+        EXPECT_THROW(linear.mps(), c10::Error);
+    }
+}
+
 // ============================================================
 // Batch-agnostic RNN/LSTM/GRU: different batch sizes
 // ============================================================
