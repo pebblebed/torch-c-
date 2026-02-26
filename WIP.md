@@ -69,12 +69,17 @@ Date: 2026-02-26
   - `charformer.hpp:208`
   - `tests/charformer_tests.cpp:29`
 
-- [ ] `MEDIUM` Reduce invariant bypass surface from raw tensor exposure.
-  Typed shape guarantees are easy to circumvent via public raw tensor access and untyped overloads.
+- [x] `MEDIUM` Reduce invariant bypass surface from raw tensor exposure.
+  Resolution: hardened `Tensor op torch::Tensor` overloads to reject broadcast/shape-mismatched raw operands, removed duplicate `BatchTensor::data()` raw escape hatch, and added deterministic `Embedding::forward` index dtype validation.
+  Regression tests:
+  - `TensorTest.EmbeddingRejectsFloatIndicesWithRuntimeError`
+  - `ErrorHandlingTest.TensorRawTensorOperatorRejectsBroadcastShapes`
   Files:
-  - `include/trails/trails.hpp:269`
   - `include/trails/trails.hpp:339`
+  - `include/trails/trails.hpp:433`
   - `include/trails/trails_nn.hpp:163`
+  - `tests/tensor_tests.cpp:716`
+  - `tests/tensor_tests.cpp:2121`
 
 - [ ] `MEDIUM` Improve production-readiness test strategy.
   Existing tests are broad, but accelerator tests are skipped without hardware and there is no soak/fault-injection coverage.

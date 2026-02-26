@@ -713,6 +713,12 @@ TEST(TensorTest, Embedding_single_batch) {
     EXPECT_TRUE(output.t().sizes() == (std::vector<int64_t>{1, 3, 4}));
 }
 
+TEST(TensorTest, EmbeddingRejectsFloatIndicesWithRuntimeError) {
+    trails::nn::Embedding<10, 4> emb;
+    auto float_indices = BatchTensor<3>(torch::randn({2, 3}));
+    EXPECT_THROW(emb.forward<3>(float_indices), std::runtime_error);
+}
+
 TEST(TensorTest, ProjectReturnsSequenceEmbeddings) {
     auto tokens = Tensor<2, 4>(torch::tensor({{1, 2, 3, 4}, {4, 3, 2, 1}}, torch::kLong));
     auto weights = Tensor<8, 6>::randn();
@@ -2110,6 +2116,15 @@ TEST(ErrorHandlingTest, BatchTensorBindMismatch) {
     EXPECT_THROW(bt.bind<0>(), std::runtime_error);
     // Correct bind should not throw
     EXPECT_NO_THROW(bt.bind<4>());
+}
+
+TEST(ErrorHandlingTest, TensorRawTensorOperatorRejectsBroadcastShapes) {
+    auto t = Tensor<2, 4>::ones();
+    auto broadcastable = torch::ones({1, 4});
+    EXPECT_THROW((void)(t + broadcastable), std::runtime_error);
+    EXPECT_THROW((void)(t - broadcastable), std::runtime_error);
+    EXPECT_THROW((void)(t * broadcastable), std::runtime_error);
+    EXPECT_THROW((void)(t / broadcastable), std::runtime_error);
 }
 
 TEST(ErrorHandlingTest, BatchTensorConstructorWrongDims) {

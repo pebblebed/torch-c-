@@ -336,19 +336,31 @@ struct Tensor {
     Tensor log() { return { t_.log() }; }
     Tensor sqrt() { return { t_.sqrt() }; }
     Tensor operator+(Tensor<Dims...> other) { return { t_ + other.t() }; }
-    Tensor operator+(torch::Tensor other) { return { t_ + other }; }
+    Tensor operator+(torch::Tensor other) {
+        validate_raw_operand_shape(other, "+");
+        return { t_ + other };
+    }
     Tensor operator+(float other) { return { t_ + other }; }
 
     Tensor operator-(Tensor<Dims...> other) { return { t_ - other.t() }; } 
-    Tensor operator-(torch::Tensor other) { return { t_ - other }; } 
+    Tensor operator-(torch::Tensor other) {
+        validate_raw_operand_shape(other, "-");
+        return { t_ - other };
+    } 
     Tensor operator-(float other) { return { t_ - other }; }
 
     Tensor operator*(Tensor<Dims...> other) { return { t_ * other.t() }; }
-    Tensor operator*(torch::Tensor other) { return { t_ * other }; }
+    Tensor operator*(torch::Tensor other) {
+        validate_raw_operand_shape(other, "*");
+        return { t_ * other };
+    }
     Tensor operator*(float other) { return { t_ * other }; }
 
     Tensor operator/(Tensor<Dims...> other) { return { t_ / other.t() }; }
-    Tensor operator/(torch::Tensor other) { return { t_ / other }; }
+    Tensor operator/(torch::Tensor other) {
+        validate_raw_operand_shape(other, "/");
+        return { t_ / other };
+    }
     Tensor operator/(float other) { return { t_ / other }; }
 
     friend std::ostream& operator<<(std::ostream& os, const Tensor& t) {
@@ -418,7 +430,16 @@ struct Tensor {
         return result_t{ t_ };
     }
 
-    private:
+private:
+    void validate_raw_operand_shape(const torch::Tensor& other, const char* op) const {
+        if (!other.sizes().equals(t_.sizes())) {
+            throw std::runtime_error(
+                std::string("Tensor::operator") + op +
+                "(torch::Tensor): expected raw operand shape " + detail::str(t_.sizes()) +
+                " but got " + detail::str(other.sizes()));
+        }
+    }
+
     torch::Tensor t_;
 };
 
@@ -494,7 +515,6 @@ struct BatchTensor {
 
     int64_t batch_size() const { return t_.size(0); }
     torch::Tensor t() const { return t_; }
-    torch::Tensor data() const { return t_; }
 
     // Promote to static tensor — runtime checks batch_size() == B
     template<int B>

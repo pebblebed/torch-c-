@@ -161,7 +161,12 @@ public:
     // Batch-agnostic forward: BatchTensor<SeqLen> → BatchTensor<SeqLen, EmbedDim>
     template<int SeqLen>
     BatchTensor<SeqLen, EmbedDim> forward(const BatchTensor<SeqLen>& input) {
-        return BatchTensor<SeqLen, EmbedDim>(emb->forward(input.t()));
+        auto indices = input.t();
+        auto dtype = indices.scalar_type();
+        if (dtype != torch::kLong && dtype != torch::kInt) {
+            throw std::runtime_error("Embedding::forward: expected int64/int32 indices");
+        }
+        return BatchTensor<SeqLen, EmbedDim>(emb->forward(indices.to(torch::kLong)));
     }
 };
 
