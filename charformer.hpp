@@ -1,6 +1,7 @@
 #pragma once
 #include <array>
 #include <cassert>
+#include <memory>
 #include <string>
 #include <torch/torch.h>
 #include "trails/trails.hpp"
@@ -62,15 +63,22 @@ public:
  */
 template<typename Layer, typename Norm>
 class ResNorm : public torch::nn::Module {
-    Layer layer;
-    Norm norm;
+    std::shared_ptr<Layer> layer;
+    std::shared_ptr<Norm> norm;
 public:
+    ResNorm()
+    : layer(std::make_shared<Layer>())
+    , norm(std::make_shared<Norm>()) {
+        register_module("layer", layer);
+        register_module("norm", norm);
+    }
+
     auto& cuda() { this->to(torch::kCUDA); return *this; }
     auto& mps() { this->to(torch::kMPS); return *this; }
 
     template<typename T>
     T forward(T x) {
-        return norm.forward(layer.forward(x) + x);
+        return norm->forward(layer->forward(x) + x);
     }
 };
 

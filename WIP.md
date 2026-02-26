@@ -39,12 +39,13 @@ Date: 2026-02-26
   - `dataset_dir.cpp:55`
   - `tests/dataset_tests.cpp:79`
 
-- [ ] `HIGH` Register submodules inside `ResNorm`.
+- [x] `HIGH` Register submodules inside `ResNorm`.
   `layer` and `norm` are not registered as submodules, which can hide parameters from optimizers/checkpointing.
+  Resolution: converted `ResNorm` children to registered `shared_ptr` modules and added regression coverage asserting parameter visibility.
   Files:
-  - `charformer.hpp:47`
-  - `charformer.hpp:49`
-  - `charformer.hpp:50`
+  - `charformer.hpp:48`
+  - `charformer.hpp:54`
+  - `tests/charformer_tests.cpp:82`
 
 - [ ] `HIGH` Harden device handling for inference/training paths.
   `forward(std::string)` creates CPU tensors regardless of model device; demo hard-forces `.mps()` without fallback.

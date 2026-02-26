@@ -79,6 +79,13 @@ TEST(CharformerTests, ResNorm) {
     EXPECT_EQ(y.t().size(1), D);
 }
 
+TEST(CharformerTests, ResNormExposesChildParameters) {
+    constexpr int D = 32;
+    ResNorm<trails::nn::Linear<D, D>, RMSNorm<D>> block;
+    // Expect linear weight+bias plus RMSNorm gamma.
+    EXPECT_EQ(block.parameters().size(), 3u);
+}
+
 TEST(CharformerTests, SelfAttention) {
     // Use batch-agnostic trails::nn::MultiHeadAttention<NumHeads, ModelDim>
     constexpr int B = 3;
