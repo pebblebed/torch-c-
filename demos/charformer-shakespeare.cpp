@@ -129,10 +129,7 @@ void train(Model& model, const std::string& text, int batch_size, int num_epochs
             auto input = BatchTensor<SeqLen>(batch.x);
             auto logits = model.forward(input);
 
-            // Flatten for cross_entropy: (B*SeqLen, VocabSize) vs (B*SeqLen,)
-            auto logits_flat = logits.t().reshape({-1, VocabSize});
-            auto target_flat = batch.y.reshape({-1});
-            auto loss = torch::nn::functional::cross_entropy(logits_flat, target_flat);
+            auto loss = language_model_loss(logits.t(), batch.y);
 
             loss.backward();
             optimizer.step();

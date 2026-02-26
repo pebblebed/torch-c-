@@ -284,6 +284,32 @@ TEST(CharformerBatchTests, CharFormer_BatchDynamic) {
     EXPECT_LT(max_err, 1e-4f);
 }
 
+TEST(CharformerTests, LanguageModelLossMatchesNllGradientOnLogProbs) {
+    constexpr int B = 3;
+    constexpr int SeqLen = 7;
+    constexpr int Vocab = 11;
+    auto raw_logits = torch::randn({B, SeqLen, Vocab});
+    auto log_probs = torch::log_softmax(raw_logits, /*dim=*/-1);
+    auto labels = torch::randint(0, Vocab, {B, SeqLen}, torch::kLong);
+
+    auto input_a = log_probs.detach().clone().set_requires_grad(true);
+    auto input_b = log_probs.detach().clone().set_requires_grad(true);
+
+    auto got = language_model_loss(input_a, labels);
+    auto expected = torch::nn::functional::nll_loss(
+        input_b.reshape({B * SeqLen, Vocab}),
+        labels.reshape({B * SeqLen}));
+
+    got.backward();
+    expected.backward();
+
+    EXPECT_TRUE(torch::allclose(
+        input_a.grad(),
+        input_b.grad(),
+        1e-6,
+        1e-6));
+}
+
 // ============================================================
 // CUDA tests for cuda() method
 // ============================================================
@@ -371,4 +397,3 @@ TEST(MpsTests, CharFormerMpsForward) {
     EXPECT_TRUE(torch::all(torch::isfinite(y.t().to(torch::kCPU))).item<bool>());
     EXPECT_TRUE(torch::all(y.t().to(torch::kCPU) <= 0.0f).item<bool>());
 }
-

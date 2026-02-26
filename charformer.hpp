@@ -12,6 +12,22 @@ namespace nn = torch::nn;
 using namespace trails;
 using namespace trails::nn;
 
+inline torch::Tensor language_model_loss(torch::Tensor log_probs, torch::Tensor target_ids) {
+    if (log_probs.dim() != 3) {
+        throw std::runtime_error("language_model_loss: expected log_probs with shape [B, SeqLen, Vocab]");
+    }
+    if (target_ids.dim() != 2) {
+        throw std::runtime_error("language_model_loss: expected target_ids with shape [B, SeqLen]");
+    }
+    if (log_probs.size(0) != target_ids.size(0) || log_probs.size(1) != target_ids.size(1)) {
+        throw std::runtime_error("language_model_loss: batch/sequence dimensions must match");
+    }
+    auto vocab_size = log_probs.size(2);
+    auto flat_log_probs = log_probs.reshape({-1, vocab_size});
+    auto flat_targets = target_ids.reshape({-1});
+    return torch::nn::functional::nll_loss(flat_log_probs, flat_targets);
+}
+
 template<int ...Dims>
 class RMSNorm : public torch::nn::Module {
     torch::Tensor gamma_;

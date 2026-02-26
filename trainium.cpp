@@ -62,10 +62,7 @@ int main(int argc, char** argv) {
 
         // Reshape for cross_entropy: flatten (batch, SeqLen, VocabSize) -> (batch*SeqLen, VocabSize)
         auto batch_size = logits.batch_size();
-        auto logits_flat = logits.t().reshape({batch_size * SeqLen, VocabSize});
-        auto target_flat = target.reshape({batch_size * SeqLen});
-
-        auto loss = torch::nn::functional::cross_entropy(logits_flat, target_flat);
+        auto loss = language_model_loss(logits.t(), target);
         loss.backward();
         optimizer.step();
 
