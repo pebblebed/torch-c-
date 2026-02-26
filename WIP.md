@@ -12,11 +12,15 @@ Date: 2026-02-26
   - `trainium.cpp:68`
   - `demos/charformer-shakespeare.cpp:135`
 
-- [ ] `CRITICAL` Guard dataset sampling against modulo-by-zero when `file.size == n_ctx`.
+- [x] `CRITICAL` Guard dataset sampling against modulo-by-zero when `file.size == n_ctx`.
   Current sampling does `% (file.size - n_ctx)`, which is zero in this edge case.
+  Resolution: switched sampling window math to `file.size - n_ctx + 1`, added zero-window guard in `get()`, and added regression coverage for exact-context files.
+  Note: this also fixed an off-by-one undercount in available samples.
   Files:
-  - `dataset_dir.hpp:43`
-  - `dataset_dir.cpp:34`
+  - `dataset_dir.cpp:29`
+  - `dataset_dir.cpp:40`
+  - `dataset_dir.cpp:50`
+  - `tests/dataset_tests.cpp:28`
 
 - [ ] `HIGH` Fix `MMappedFile` constructor initializer-order bug.
   `lseek`/`mmap` currently use `fd` before checking whether `open()` succeeded.

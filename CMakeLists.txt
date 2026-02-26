@@ -76,12 +76,15 @@ if(TRAILS_BUILD_TESTS)
 
     add_executable(tensor_tests tests/tensor_tests.cpp tests/trails_header_smoke.cpp)
     add_executable(charformer_tests tests/charformer_tests.cpp)
+    add_executable(dataset_tests tests/dataset_tests.cpp dataset_dir.cpp)
     target_link_libraries(tensor_tests gtest_main trails)
     target_link_libraries(charformer_tests gtest_main trails)
+    target_link_libraries(dataset_tests gtest_main trails)
 
     include(GoogleTest)
     gtest_discover_tests(tensor_tests)
     gtest_discover_tests(charformer_tests)
+    gtest_discover_tests(dataset_tests)
 endif()
 
 # ---------------------------------------------------------------------------

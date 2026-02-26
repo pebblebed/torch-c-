@@ -30,8 +30,19 @@ static inline uint64_t dumb_hash(uint64_t input) {
     return (input * 2654435761) >> 32;
 }
 
+static inline size_t sample_count(size_t file_size, size_t n_ctx) {
+    if (file_size < n_ctx) {
+        return 0;
+    }
+    return file_size - n_ctx + 1;
+}
+
 Example DatasetFile::get(size_t index) {
-    auto offset = dumb_hash(index) % (file.size - n_ctx);
+    auto windows = sample_count(file.size, n_ctx);
+    if (windows == 0) {
+        throw std::runtime_error("DatasetFile::get called with file smaller than n_ctx");
+    }
+    auto offset = dumb_hash(index) % windows;
     auto data = file.data + offset;
     // Next-token prediction: x = tokens[0..n_ctx-2], y = tokens[1..n_ctx-1]
     torch::Tensor x = make_tensor(data, n_ctx - 1);
@@ -40,10 +51,11 @@ Example DatasetFile::get(size_t index) {
 }
 
 torch::optional<size_t> DatasetFile::size() const {
-    if (file.size < n_ctx) {
+    auto windows = sample_count(file.size, n_ctx);
+    if (windows == 0) {
         return torch::nullopt;
     }
-    return (file.size - n_ctx) / batch_size;
+    return windows / batch_size;
 }
 
 DatasetDir::DatasetDir(const std::string& path, size_t batch_size, size_t n_ctx)

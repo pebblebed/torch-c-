@@ -58,8 +58,16 @@ if get_option('tests')
     dependencies : [trails_dep, gtest_dep],
   )
 
+  dataset_tests = executable(
+    'dataset_tests',
+    'tests/dataset_tests.cpp',
+    'dataset_dir.cpp',
+    dependencies : [trails_dep, gtest_dep],
+  )
+
   test('tensor_tests', tensor_tests)
   test('charformer_tests', charformer_tests)
+  test('dataset_tests', dataset_tests)
 endif
 
 # ---------------------------------------------------------------------------
@@ -86,4 +94,3 @@ if get_option('demos')
     dependencies        : [trails_dep],
   )
 endif
-
