@@ -305,9 +305,31 @@ struct Tensor {
     Tensor<> max() {
        return { t_.max() };
     }
+    Tensor<> min() { return { t_.min() }; }
+    Tensor<> sum() { return { t_.sum() }; }
+    Tensor<> prod() { return { t_.prod() }; }
+    Tensor<> any() { return { t_.any() }; }
+    Tensor<> all() { return { t_.all() }; }
+    Tensor<> norm(float p = 2.0f) { return { t_.norm(p) }; }
+
     template<bool keepdim=false, int64_t ...reduceDims>
     detail::ReduceDims<Tensor, keepdim, reduceDims...>::tensor_t mean() {
         return { t_.mean(detail::ReduceDims<Tensor, keepdim, reduceDims...>::dims, keepdim) };
+    }
+
+    template<bool keepdim=false, int64_t ...reduceDims>
+    detail::ReduceDims<Tensor, keepdim, reduceDims...>::tensor_t sum() {
+        return { t_.sum(detail::ReduceDims<Tensor, keepdim, reduceDims...>::dims, keepdim) };
+    }
+
+    template<bool keepdim=false, int64_t ...reduceDims>
+    detail::ReduceDims<Tensor, keepdim, reduceDims...>::tensor_t var() {
+        return { t_.var(detail::ReduceDims<Tensor, keepdim, reduceDims...>::dims, /*unbiased=*/true, keepdim) };
+    }
+
+    template<bool keepdim=false, int64_t ...reduceDims>
+    detail::ReduceDims<Tensor, keepdim, reduceDims...>::tensor_t std_() {
+        return { t_.std(detail::ReduceDims<Tensor, keepdim, reduceDims...>::dims, /*unbiased=*/true, keepdim) };
     }
 
     Tensor rsqrt() { return { t_.rsqrt() }; }
@@ -335,6 +357,23 @@ struct Tensor {
     Tensor exp() { return { t_.exp() }; }
     Tensor log() { return { t_.log() }; }
     Tensor sqrt() { return { t_.sqrt() }; }
+    Tensor neg() { return { t_.neg() }; }
+    Tensor operator-() const { return { -t_ }; }
+    Tensor clamp(float min, float max) { return { t_.clamp(min, max) }; }
+    Tensor clamp_min(float min) { return { t_.clamp_min(min) }; }
+    Tensor clamp_max(float max) { return { t_.clamp_max(max) }; }
+    Tensor pow(float exponent) { return { t_.pow(exponent) }; }
+    Tensor floor() { return { t_.floor() }; }
+    Tensor ceil() { return { t_.ceil() }; }
+    Tensor round() { return { t_.round() }; }
+    Tensor trunc() { return { t_.trunc() }; }
+    Tensor reciprocal() { return { t_.reciprocal() }; }
+    Tensor sign() { return { t_.sign() }; }
+    Tensor sin() { return { torch::sin(t_) }; }
+    Tensor cos() { return { torch::cos(t_) }; }
+    Tensor clone() { return { t_.clone() }; }
+    Tensor detach() { return { t_.detach() }; }
+    Tensor contiguous() { return { t_.contiguous() }; }
     Tensor operator+(Tensor<Dims...> other) { return { t_ + other.t() }; }
     Tensor operator+(torch::Tensor other) {
         validate_raw_operand_shape(other, "+");
@@ -362,6 +401,33 @@ struct Tensor {
         return { t_ / other };
     }
     Tensor operator/(float other) { return { t_ / other }; }
+
+    // Comparison operators (element-wise, return bool-dtype tensor of same shape)
+    Tensor eq(Tensor other) const { return { t_.eq(other.t()) }; }
+    Tensor eq(float val) const { return { t_.eq(val) }; }
+    Tensor ne(Tensor other) const { return { t_.ne(other.t()) }; }
+    Tensor ne(float val) const { return { t_.ne(val) }; }
+    Tensor lt(Tensor other) const { return { t_.lt(other.t()) }; }
+    Tensor lt(float val) const { return { t_.lt(val) }; }
+    Tensor le(Tensor other) const { return { t_.le(other.t()) }; }
+    Tensor le(float val) const { return { t_.le(val) }; }
+    Tensor gt(Tensor other) const { return { t_.gt(other.t()) }; }
+    Tensor gt(float val) const { return { t_.gt(val) }; }
+    Tensor ge(Tensor other) const { return { t_.ge(other.t()) }; }
+    Tensor ge(float val) const { return { t_.ge(val) }; }
+
+    friend Tensor operator==(const Tensor& a, const Tensor& b) { return a.eq(b); }
+    friend Tensor operator==(const Tensor& a, float b) { return a.eq(b); }
+    friend Tensor operator!=(const Tensor& a, const Tensor& b) { return a.ne(b); }
+    friend Tensor operator!=(const Tensor& a, float b) { return a.ne(b); }
+    friend Tensor operator<(const Tensor& a, const Tensor& b) { return a.lt(b); }
+    friend Tensor operator<(const Tensor& a, float b) { return a.lt(b); }
+    friend Tensor operator<=(const Tensor& a, const Tensor& b) { return a.le(b); }
+    friend Tensor operator<=(const Tensor& a, float b) { return a.le(b); }
+    friend Tensor operator>(const Tensor& a, const Tensor& b) { return a.gt(b); }
+    friend Tensor operator>(const Tensor& a, float b) { return a.gt(b); }
+    friend Tensor operator>=(const Tensor& a, const Tensor& b) { return a.ge(b); }
+    friend Tensor operator>=(const Tensor& a, float b) { return a.ge(b); }
 
     friend std::ostream& operator<<(std::ostream& os, const Tensor& t) {
         os << t.t();
@@ -575,6 +641,33 @@ struct BatchTensor {
     BatchTensor log() const { return { t_.log() }; }
     BatchTensor sqrt() const { return { t_.sqrt() }; }
 
+    // Comparison operators (element-wise, return bool-dtype tensor of same shape)
+    BatchTensor eq(const BatchTensor& other) const { return { t_.eq(other.t_) }; }
+    BatchTensor eq(float val) const { return { t_.eq(val) }; }
+    BatchTensor ne(const BatchTensor& other) const { return { t_.ne(other.t_) }; }
+    BatchTensor ne(float val) const { return { t_.ne(val) }; }
+    BatchTensor lt(const BatchTensor& other) const { return { t_.lt(other.t_) }; }
+    BatchTensor lt(float val) const { return { t_.lt(val) }; }
+    BatchTensor le(const BatchTensor& other) const { return { t_.le(other.t_) }; }
+    BatchTensor le(float val) const { return { t_.le(val) }; }
+    BatchTensor gt(const BatchTensor& other) const { return { t_.gt(other.t_) }; }
+    BatchTensor gt(float val) const { return { t_.gt(val) }; }
+    BatchTensor ge(const BatchTensor& other) const { return { t_.ge(other.t_) }; }
+    BatchTensor ge(float val) const { return { t_.ge(val) }; }
+
+    friend BatchTensor operator==(const BatchTensor& a, const BatchTensor& b) { return a.eq(b); }
+    friend BatchTensor operator==(const BatchTensor& a, float b) { return a.eq(b); }
+    friend BatchTensor operator!=(const BatchTensor& a, const BatchTensor& b) { return a.ne(b); }
+    friend BatchTensor operator!=(const BatchTensor& a, float b) { return a.ne(b); }
+    friend BatchTensor operator<(const BatchTensor& a, const BatchTensor& b) { return a.lt(b); }
+    friend BatchTensor operator<(const BatchTensor& a, float b) { return a.lt(b); }
+    friend BatchTensor operator<=(const BatchTensor& a, const BatchTensor& b) { return a.le(b); }
+    friend BatchTensor operator<=(const BatchTensor& a, float b) { return a.le(b); }
+    friend BatchTensor operator>(const BatchTensor& a, const BatchTensor& b) { return a.gt(b); }
+    friend BatchTensor operator>(const BatchTensor& a, float b) { return a.gt(b); }
+    friend BatchTensor operator>=(const BatchTensor& a, const BatchTensor& b) { return a.ge(b); }
+    friend BatchTensor operator>=(const BatchTensor& a, float b) { return a.ge(b); }
+
     // Transpose: swap mathematical dims D1 and D2 (NOT the batch dim)
     // The actual torch dims are D1+1 and D2+1 (offset by batch dim)
     template<int D1, int D2>
@@ -592,6 +685,23 @@ struct BatchTensor {
     BatchTensor abs() const { return { t_.abs() }; }
     BatchTensor cuda() const { return { t_.cuda() }; }
     BatchTensor mps() const { return { t_.to(torch::kMPS) }; }
+    BatchTensor neg() const { return { t_.neg() }; }
+    BatchTensor operator-() const { return { -t_ }; }
+    BatchTensor clamp(float min, float max) const { return { t_.clamp(min, max) }; }
+    BatchTensor clamp_min(float min) const { return { t_.clamp_min(min) }; }
+    BatchTensor clamp_max(float max) const { return { t_.clamp_max(max) }; }
+    BatchTensor pow(float exponent) const { return { t_.pow(exponent) }; }
+    BatchTensor floor() const { return { t_.floor() }; }
+    BatchTensor ceil() const { return { t_.ceil() }; }
+    BatchTensor round() const { return { t_.round() }; }
+    BatchTensor trunc() const { return { t_.trunc() }; }
+    BatchTensor reciprocal() const { return { t_.reciprocal() }; }
+    BatchTensor sign() const { return { t_.sign() }; }
+    BatchTensor sin() const { return { torch::sin(t_) }; }
+    BatchTensor cos() const { return { torch::cos(t_) }; }
+    BatchTensor clone() const { return { t_.clone() }; }
+    BatchTensor detach() const { return { t_.detach() }; }
+    BatchTensor contiguous() const { return { t_.contiguous() }; }
 
     // Utility methods
     std::string str() const {
@@ -606,6 +716,12 @@ struct BatchTensor {
     // Reduction methods (reduce entire tensor to scalar)
     Tensor<> mean() const { return { t_.mean() }; }
     Tensor<> max() const { return { t_.max() }; }
+    Tensor<> min() const { return { t_.min() }; }
+    Tensor<> sum() const { return { t_.sum() }; }
+    Tensor<> prod() const { return { t_.prod() }; }
+    Tensor<> any() const { return { t_.any() }; }
+    Tensor<> all() const { return { t_.all() }; }
+    Tensor<> norm(float p = 2.0f) const { return { t_.norm(p) }; }
 
     // Static factory methods with runtime batch size
     static BatchTensor randn(int batch_size) {

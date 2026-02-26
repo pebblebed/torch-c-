@@ -260,6 +260,95 @@ TEST(TensorTest, MeanReduceDimsUsesDimensionIndices) {
     }));
 }
 
+// ============================================================
+// Wave 1: Reduction tests
+// ============================================================
+
+TEST(TensorTest, ScalarMin) {
+    auto t = Tensor<2, 3>(torch::tensor({{1.0f, 2.0f, 3.0f}, {4.0f, 0.5f, 6.0f}}));
+    auto m = t.min();
+    ASSERT_EQ(m.dim(), 0);
+    EXPECT_NEAR(m.item<float>(), 0.5f, 1e-5f);
+}
+
+TEST(TensorTest, ScalarSum) {
+    auto t = Tensor<2, 3>(torch::ones({2, 3}));
+    auto s = t.sum();
+    ASSERT_EQ(s.dim(), 0);
+    EXPECT_NEAR(s.item<float>(), 6.0f, 1e-5f);
+}
+
+TEST(TensorTest, ScalarProd) {
+    auto t = Tensor<2, 3>(torch::tensor({{1.0f, 2.0f, 3.0f}, {4.0f, 5.0f, 6.0f}}));
+    auto p = t.prod();
+    ASSERT_EQ(p.dim(), 0);
+    EXPECT_NEAR(p.item<float>(), 720.0f, 1e-3f);
+}
+
+TEST(TensorTest, ScalarAny) {
+    auto t = Tensor<3>(torch::tensor({0.0f, 0.0f, 1.0f}));
+    auto a = t.any();
+    ASSERT_EQ(a.dim(), 0);
+    EXPECT_TRUE(a.item<bool>());
+
+    auto t2 = Tensor<3>(torch::zeros({3}));
+    auto a2 = t2.any();
+    EXPECT_FALSE(a2.item<bool>());
+}
+
+TEST(TensorTest, ScalarAll) {
+    auto t = Tensor<3>(torch::tensor({1.0f, 1.0f, 1.0f}));
+    auto a = t.all();
+    ASSERT_EQ(a.dim(), 0);
+    EXPECT_TRUE(a.item<bool>());
+
+    auto t2 = Tensor<3>(torch::tensor({1.0f, 0.0f, 1.0f}));
+    auto a2 = t2.all();
+    EXPECT_FALSE(a2.item<bool>());
+}
+
+TEST(TensorTest, ScalarNorm) {
+    auto t = Tensor<3>(torch::tensor({3.0f, 4.0f, 0.0f}));
+    auto n = t.norm();
+    ASSERT_EQ(n.dim(), 0);
+    EXPECT_NEAR(n.item<float>(), 5.0f, 1e-5f);
+
+    // L1 norm
+    auto n1 = t.norm(1.0f);
+    EXPECT_NEAR(n1.item<float>(), 7.0f, 1e-5f);
+}
+
+TEST(TensorTest, SumReduceDims) {
+    auto t = Tensor<2, 3>(torch::ones({2, 3}));
+    // Sum over dim 1 -> Tensor<2>
+    auto s = t.sum<false, 1>();
+    EXPECT_TRUE(s.compare_sizes(torch::IntArrayRef{2}));
+    EXPECT_NEAR(s.t().index({0}).item<float>(), 3.0f, 1e-5f);
+
+    // Sum over dim 0, keepdim -> Tensor<1, 3>
+    auto sk = t.sum<true, 0>();
+    EXPECT_TRUE(sk.compare_sizes(torch::IntArrayRef{1, 3}));
+    EXPECT_NEAR(sk.t().index({0, 0}).item<float>(), 2.0f, 1e-5f);
+}
+
+TEST(TensorTest, VarReduceDims) {
+    // Known data: var of {1,2,3} = 1.0 (unbiased)
+    auto t = Tensor<2, 3>(torch::tensor({{1.0f, 2.0f, 3.0f}, {4.0f, 5.0f, 6.0f}}));
+    auto v = t.var<false, 1>();
+    EXPECT_TRUE(v.compare_sizes(torch::IntArrayRef{2}));
+    EXPECT_NEAR(v.t().index({0}).item<float>(), 1.0f, 1e-5f);
+    EXPECT_NEAR(v.t().index({1}).item<float>(), 1.0f, 1e-5f);
+}
+
+TEST(TensorTest, StdReduceDims) {
+    auto t = Tensor<2, 3>(torch::tensor({{1.0f, 2.0f, 3.0f}, {4.0f, 5.0f, 6.0f}}));
+    auto s = t.std_<false, 1>();
+    EXPECT_TRUE(s.compare_sizes(torch::IntArrayRef{2}));
+    EXPECT_NEAR(s.t().index({0}).item<float>(), 1.0f, 1e-5f);
+    EXPECT_NEAR(s.t().index({1}).item<float>(), 1.0f, 1e-5f);
+}
+
+
 TEST(TensorTest, set_dim) {
     using namespace trails::detail;
     using T0 = val_sequence<int>;
@@ -2333,6 +2422,62 @@ TEST(BatchTensorOpsTest, Max) {
     EXPECT_NEAR(m.item<float>(), 5.0f, 1e-5f);
 }
 
+TEST(BatchTensorOpsTest, Min) {
+    auto raw = torch::tensor({{1.0f, 5.0f}, {3.0f, 2.0f}, {4.0f, 0.0f}});
+    auto bt = BatchTensor<2>(raw);
+    auto m = bt.min();
+    ASSERT_EQ(m.dim(), 0);
+    EXPECT_NEAR(m.item<float>(), 0.0f, 1e-5f);
+}
+
+TEST(BatchTensorOpsTest, Sum) {
+    auto bt = (Tensor<3, 4>::ones() * 2.0f).unbatch();
+    auto s = bt.sum();
+    ASSERT_EQ(s.dim(), 0);
+    EXPECT_NEAR(s.item<float>(), 24.0f, 1e-5f);  // 3*4*2
+}
+
+TEST(BatchTensorOpsTest, Prod) {
+    auto raw = torch::tensor({{1.0f, 2.0f}, {3.0f, 1.0f}});
+    auto bt = BatchTensor<2>(raw);
+    auto p = bt.prod();
+    ASSERT_EQ(p.dim(), 0);
+    EXPECT_NEAR(p.item<float>(), 6.0f, 1e-5f);
+}
+
+TEST(BatchTensorOpsTest, Any) {
+    auto raw = torch::tensor({{0.0f, 0.0f}, {0.0f, 1.0f}});
+    auto bt = BatchTensor<2>(raw);
+    auto a = bt.any();
+    EXPECT_TRUE(a.item<bool>());
+
+    auto raw2 = torch::zeros({2, 3});
+    auto bt2 = BatchTensor<3>(raw2);
+    auto a2 = bt2.any();
+    EXPECT_FALSE(a2.item<bool>());
+}
+
+TEST(BatchTensorOpsTest, All) {
+    auto raw = torch::ones({2, 3});
+    auto bt = BatchTensor<3>(raw);
+    auto a = bt.all();
+    EXPECT_TRUE(a.item<bool>());
+
+    auto raw2 = torch::tensor({{1.0f, 0.0f}, {1.0f, 1.0f}});
+    auto bt2 = BatchTensor<2>(raw2);
+    auto a2 = bt2.all();
+    EXPECT_FALSE(a2.item<bool>());
+}
+
+TEST(BatchTensorOpsTest, Norm) {
+    auto raw = torch::tensor({{3.0f, 4.0f}});
+    auto bt = BatchTensor<2>(raw);
+    auto n = bt.norm();
+    ASSERT_EQ(n.dim(), 0);
+    EXPECT_NEAR(n.item<float>(), 5.0f, 1e-5f);
+}
+
+
 TEST(BatchTensorOpsTest, StaticRandn) {
     auto bt = BatchTensor<4, 8>::randn(5);
     ASSERT_EQ(bt.batch_size(), 5);
@@ -2352,6 +2497,176 @@ TEST(BatchTensorOpsTest, StaticOnes) {
     ASSERT_EQ(bt.batch_size(), 3);
     ASSERT_EQ(bt.t().size(1), 4);
     EXPECT_NEAR(bt.t().sum().item<float>(), 12.0f, 1e-5f);  // 3*4*1
+}
+
+// ============================================================
+// Wave 1: Shape-preserving unary ops
+// ============================================================
+
+TEST(TensorTest, neg_and_unary_minus) {
+    auto t = Tensor<2, 3>::arange();
+    auto n = t.neg();
+    auto u = -t;
+    EXPECT_TRUE(n.compare_sizes(torch::IntArrayRef{2, 3}));
+    EXPECT_TRUE(u.compare_sizes(torch::IntArrayRef{2, 3}));
+    for (int i = 0; i < t.numel(); ++i) {
+        EXPECT_FLOAT_EQ(n.data_ptr<float>()[i], -t.data_ptr<float>()[i]);
+        EXPECT_FLOAT_EQ(u.data_ptr<float>()[i], -t.data_ptr<float>()[i]);
+    }
+}
+
+TEST(TensorTest, clamp) {
+    auto t = Tensor<2, 3>(torch::tensor({{-2.0f, 0.5f, 3.0f}, {-1.0f, 1.5f, 5.0f}}));
+    auto c = t.clamp(0.0f, 2.0f);
+    EXPECT_TRUE(c.compare_sizes(torch::IntArrayRef{2, 3}));
+    auto expected = torch::tensor({{0.0f, 0.5f, 2.0f}, {0.0f, 1.5f, 2.0f}});
+    EXPECT_TRUE(torch::allclose(c.t(), expected));
+}
+
+TEST(TensorTest, clamp_min_max) {
+    auto t = Tensor<2, 3>(torch::tensor({{-2.0f, 0.5f, 3.0f}, {-1.0f, 1.5f, 5.0f}}));
+    auto cmin = t.clamp_min(0.0f);
+    auto cmax = t.clamp_max(2.0f);
+    EXPECT_TRUE(torch::allclose(cmin.t(), torch::tensor({{0.0f, 0.5f, 3.0f}, {0.0f, 1.5f, 5.0f}})));
+    EXPECT_TRUE(torch::allclose(cmax.t(), torch::tensor({{-2.0f, 0.5f, 2.0f}, {-1.0f, 1.5f, 2.0f}})));
+}
+
+TEST(TensorTest, pow) {
+    auto t = Tensor<2, 3>(torch::tensor({{1.0f, 2.0f, 3.0f}, {4.0f, 5.0f, 6.0f}}));
+    auto p = t.pow(2.0f);
+    EXPECT_TRUE(p.compare_sizes(torch::IntArrayRef{2, 3}));
+    auto expected = torch::tensor({{1.0f, 4.0f, 9.0f}, {16.0f, 25.0f, 36.0f}});
+    EXPECT_TRUE(torch::allclose(p.t(), expected));
+}
+
+TEST(TensorTest, floor_ceil_round_trunc) {
+    auto t = Tensor<4>(torch::tensor({1.3f, 2.7f, -1.3f, -2.7f}));
+    EXPECT_TRUE(torch::allclose(t.floor().t(), torch::tensor({1.0f, 2.0f, -2.0f, -3.0f})));
+    EXPECT_TRUE(torch::allclose(t.ceil().t(), torch::tensor({2.0f, 3.0f, -1.0f, -2.0f})));
+    EXPECT_TRUE(torch::allclose(t.trunc().t(), torch::tensor({1.0f, 2.0f, -1.0f, -2.0f})));
+    // round: banker's rounding for .5, but 1.3->1, 2.7->3
+    auto r = t.round();
+    EXPECT_TRUE(r.compare_sizes(torch::IntArrayRef{4}));
+}
+
+TEST(TensorTest, reciprocal) {
+    auto t = Tensor<3>(torch::tensor({1.0f, 2.0f, 4.0f}));
+    auto r = t.reciprocal();
+    EXPECT_TRUE(r.compare_sizes(torch::IntArrayRef{3}));
+    EXPECT_TRUE(torch::allclose(r.t(), torch::tensor({1.0f, 0.5f, 0.25f}), 1e-5, 1e-5));
+}
+
+TEST(TensorTest, sign) {
+    auto t = Tensor<5>(torch::tensor({-3.0f, -0.5f, 0.0f, 0.5f, 3.0f}));
+    auto s = t.sign();
+    EXPECT_TRUE(s.compare_sizes(torch::IntArrayRef{5}));
+    EXPECT_TRUE(torch::allclose(s.t(), torch::tensor({-1.0f, -1.0f, 0.0f, 1.0f, 1.0f})));
+}
+
+TEST(TensorTest, sin_cos) {
+    auto t = Tensor<3>(torch::tensor({0.0f, static_cast<float>(M_PI / 2), static_cast<float>(M_PI)}));
+    auto s = t.sin();
+    auto c = t.cos();
+    EXPECT_TRUE(s.compare_sizes(torch::IntArrayRef{3}));
+    EXPECT_TRUE(c.compare_sizes(torch::IntArrayRef{3}));
+    EXPECT_NEAR(s.data_ptr<float>()[0], 0.0f, 1e-5);
+    EXPECT_NEAR(s.data_ptr<float>()[1], 1.0f, 1e-5);
+    EXPECT_NEAR(c.data_ptr<float>()[0], 1.0f, 1e-5);
+    EXPECT_NEAR(c.data_ptr<float>()[2], -1.0f, 1e-5);
+}
+
+TEST(TensorTest, clone_detach_contiguous) {
+    auto t = Tensor<2, 3>::arange();
+    auto cl = t.clone();
+    auto dt = t.detach();
+    auto ct = t.contiguous();
+    EXPECT_TRUE(cl.compare_sizes(torch::IntArrayRef{2, 3}));
+    EXPECT_TRUE(dt.compare_sizes(torch::IntArrayRef{2, 3}));
+    EXPECT_TRUE(ct.compare_sizes(torch::IntArrayRef{2, 3}));
+    // clone should have same values
+    EXPECT_TRUE(torch::allclose(cl.t(), t.t()));
+    // clone should be a different storage
+    EXPECT_NE(cl.data_ptr<float>(), t.data_ptr<float>());
+}
+
+// ---- BatchTensor unary ops ----
+
+TEST(BatchTensorTest, neg_and_unary_minus) {
+    auto bt = (Tensor<3, 4>::ones() * 2.0f).unbatch();
+    auto n = bt.neg();
+    auto u = -bt;
+    ASSERT_EQ(n.batch_size(), 3);
+    ASSERT_EQ(u.batch_size(), 3);
+    EXPECT_NEAR(n.t().sum().item<float>(), -24.0f, 1e-5f);
+    EXPECT_NEAR(u.t().sum().item<float>(), -24.0f, 1e-5f);
+}
+
+TEST(BatchTensorTest, clamp) {
+    auto bt = BatchTensor<4>(torch::tensor({{-2.0f, 0.5f, 3.0f, 1.0f}, {-1.0f, 1.5f, 5.0f, 0.0f}}));
+    auto c = bt.clamp(0.0f, 2.0f);
+    ASSERT_EQ(c.batch_size(), 2);
+    EXPECT_TRUE((c.t() >= 0.0f).all().item<bool>());
+    EXPECT_TRUE((c.t() <= 2.0f).all().item<bool>());
+}
+
+TEST(BatchTensorTest, clamp_min_max) {
+    auto bt = BatchTensor<4>(torch::tensor({{-2.0f, 0.5f, 3.0f, 1.0f}, {-1.0f, 1.5f, 5.0f, 0.0f}}));
+    auto cmin = bt.clamp_min(0.0f);
+    auto cmax = bt.clamp_max(2.0f);
+    EXPECT_TRUE((cmin.t() >= 0.0f).all().item<bool>());
+    EXPECT_TRUE((cmax.t() <= 2.0f).all().item<bool>());
+}
+
+TEST(BatchTensorTest, pow) {
+    auto bt = (Tensor<3, 4>::ones() * 3.0f).unbatch();
+    auto p = bt.pow(2.0f);
+    ASSERT_EQ(p.batch_size(), 3);
+    EXPECT_NEAR(p.t().sum().item<float>(), 108.0f, 1e-4f);  // 3*4*9
+}
+
+TEST(BatchTensorTest, floor_ceil_round_trunc) {
+    auto bt = BatchTensor<4>(torch::tensor({{1.3f, 2.7f, -1.3f, -2.7f}}));
+    EXPECT_TRUE(torch::allclose(bt.floor().t(), torch::tensor({{1.0f, 2.0f, -2.0f, -3.0f}})));
+    EXPECT_TRUE(torch::allclose(bt.ceil().t(), torch::tensor({{2.0f, 3.0f, -1.0f, -2.0f}})));
+    EXPECT_TRUE(torch::allclose(bt.trunc().t(), torch::tensor({{1.0f, 2.0f, -1.0f, -2.0f}})));
+    auto r = bt.round();
+    ASSERT_EQ(r.batch_size(), 1);
+}
+
+TEST(BatchTensorTest, reciprocal) {
+    auto bt = BatchTensor<3>(torch::tensor({{1.0f, 2.0f, 4.0f}}));
+    auto r = bt.reciprocal();
+    ASSERT_EQ(r.batch_size(), 1);
+    EXPECT_TRUE(torch::allclose(r.t(), torch::tensor({{1.0f, 0.5f, 0.25f}}), 1e-5, 1e-5));
+}
+
+TEST(BatchTensorTest, sign) {
+    auto bt = BatchTensor<3>(torch::tensor({{-3.0f, 0.0f, 3.0f}}));
+    auto s = bt.sign();
+    EXPECT_TRUE(torch::allclose(s.t(), torch::tensor({{-1.0f, 0.0f, 1.0f}})));
+}
+
+TEST(BatchTensorTest, sin_cos) {
+    auto bt = BatchTensor<2>(torch::tensor({{0.0f, static_cast<float>(M_PI / 2)}}));
+    auto s = bt.sin();
+    auto c = bt.cos();
+    ASSERT_EQ(s.batch_size(), 1);
+    EXPECT_NEAR(s.data_ptr<float>()[0], 0.0f, 1e-5);
+    EXPECT_NEAR(s.data_ptr<float>()[1], 1.0f, 1e-5);
+    EXPECT_NEAR(c.data_ptr<float>()[0], 1.0f, 1e-5);
+}
+
+TEST(BatchTensorTest, clone_detach_contiguous) {
+    auto bt = (Tensor<3, 4>::ones() * 2.0f).unbatch();
+    auto cl = bt.clone();
+    auto dt = bt.detach();
+    auto ct = bt.contiguous();
+    ASSERT_EQ(cl.batch_size(), 3);
+    ASSERT_EQ(dt.batch_size(), 3);
+    ASSERT_EQ(ct.batch_size(), 3);
+    EXPECT_TRUE(torch::allclose(cl.t(), bt.t()));
+    // clone should be different storage
+    EXPECT_NE(cl.data_ptr<float>(), bt.data_ptr<float>());
 }
 
 TEST(BatchTensorOpsTest, Cuda) {
@@ -2461,4 +2776,116 @@ TEST(BatchAgnosticTest, BatchNorm2d_DifferentBatchSizes) {
         ASSERT_EQ(y.t().size(2), 4);
         ASSERT_EQ(y.t().size(3), 5);
     }
+}
+
+
+// ============================================================
+// Comparison operators
+// ============================================================
+
+TEST(TensorTest, ComparisonEq) {
+    auto a = Tensor<2, 3>(torch::tensor({{1.0f, 2.0f, 3.0f}, {4.0f, 5.0f, 6.0f}}));
+    auto b = Tensor<2, 3>(torch::tensor({{1.0f, 0.0f, 3.0f}, {0.0f, 5.0f, 0.0f}}));
+    auto result = a.eq(b);
+    auto expected = torch::tensor({{true, false, true}, {false, true, false}});
+    EXPECT_TRUE(torch::equal(result.t(), expected));
+
+    // Scalar version
+    auto s = a.eq(3.0f);
+    auto exp_s = torch::tensor({{false, false, true}, {false, false, false}});
+    EXPECT_TRUE(torch::equal(s.t(), exp_s));
+
+    // Operator
+    auto op = (a == b);
+    EXPECT_TRUE(torch::equal(op.t(), expected));
+    auto ops = (a == 3.0f);
+    EXPECT_TRUE(torch::equal(ops.t(), exp_s));
+}
+
+TEST(TensorTest, ComparisonNe) {
+    auto a = Tensor<2, 3>(torch::tensor({{1.0f, 2.0f, 3.0f}, {4.0f, 5.0f, 6.0f}}));
+    auto b = Tensor<2, 3>(torch::tensor({{1.0f, 0.0f, 3.0f}, {0.0f, 5.0f, 0.0f}}));
+    auto result = a.ne(b);
+    auto expected = torch::tensor({{false, true, false}, {true, false, true}});
+    EXPECT_TRUE(torch::equal(result.t(), expected));
+
+    auto op = (a != b);
+    EXPECT_TRUE(torch::equal(op.t(), expected));
+}
+
+TEST(TensorTest, ComparisonLtLe) {
+    auto a = Tensor<3>(torch::tensor({1.0f, 2.0f, 3.0f}));
+    auto b = Tensor<3>(torch::tensor({2.0f, 2.0f, 1.0f}));
+
+    // lt
+    auto lt_r = a.lt(b);
+    EXPECT_TRUE(torch::equal(lt_r.t(), torch::tensor({true, false, false})));
+    EXPECT_TRUE(torch::equal((a < b).t(), torch::tensor({true, false, false})));
+    EXPECT_TRUE(torch::equal(a.lt(2.0f).t(), torch::tensor({true, false, false})));
+    EXPECT_TRUE(torch::equal((a < 2.0f).t(), torch::tensor({true, false, false})));
+
+    // le
+    auto le_r = a.le(b);
+    EXPECT_TRUE(torch::equal(le_r.t(), torch::tensor({true, true, false})));
+    EXPECT_TRUE(torch::equal((a <= b).t(), torch::tensor({true, true, false})));
+    EXPECT_TRUE(torch::equal(a.le(2.0f).t(), torch::tensor({true, true, false})));
+}
+
+TEST(TensorTest, ComparisonGtGe) {
+    auto a = Tensor<3>(torch::tensor({1.0f, 2.0f, 3.0f}));
+    auto b = Tensor<3>(torch::tensor({2.0f, 2.0f, 1.0f}));
+
+    // gt
+    auto gt_r = a.gt(b);
+    EXPECT_TRUE(torch::equal(gt_r.t(), torch::tensor({false, false, true})));
+    EXPECT_TRUE(torch::equal((a > b).t(), torch::tensor({false, false, true})));
+    EXPECT_TRUE(torch::equal(a.gt(2.0f).t(), torch::tensor({false, false, true})));
+
+    // ge
+    auto ge_r = a.ge(b);
+    EXPECT_TRUE(torch::equal(ge_r.t(), torch::tensor({false, true, true})));
+    EXPECT_TRUE(torch::equal((a >= b).t(), torch::tensor({false, true, true})));
+    EXPECT_TRUE(torch::equal(a.ge(2.0f).t(), torch::tensor({false, true, true})));
+}
+
+TEST(BatchTensorTest, ComparisonEq) {
+    auto a = BatchTensor<3>(torch::tensor({{1.0f, 2.0f, 3.0f}, {4.0f, 5.0f, 6.0f}}));
+    auto b = BatchTensor<3>(torch::tensor({{1.0f, 0.0f, 3.0f}, {0.0f, 5.0f, 0.0f}}));
+    auto result = a.eq(b);
+    auto expected = torch::tensor({{true, false, true}, {false, true, false}});
+    EXPECT_TRUE(torch::equal(result.t(), expected));
+
+    auto s = a.eq(3.0f);
+    auto exp_s = torch::tensor({{false, false, true}, {false, false, false}});
+    EXPECT_TRUE(torch::equal(s.t(), exp_s));
+
+    EXPECT_TRUE(torch::equal((a == b).t(), expected));
+    EXPECT_TRUE(torch::equal((a == 3.0f).t(), exp_s));
+}
+
+TEST(BatchTensorTest, ComparisonNe) {
+    auto a = BatchTensor<3>(torch::tensor({{1.0f, 2.0f, 3.0f}, {4.0f, 5.0f, 6.0f}}));
+    auto b = BatchTensor<3>(torch::tensor({{1.0f, 0.0f, 3.0f}, {0.0f, 5.0f, 0.0f}}));
+    auto result = a.ne(b);
+    auto expected = torch::tensor({{false, true, false}, {true, false, true}});
+    EXPECT_TRUE(torch::equal(result.t(), expected));
+    EXPECT_TRUE(torch::equal((a != b).t(), expected));
+}
+
+TEST(BatchTensorTest, ComparisonLtLeGtGe) {
+    auto a = BatchTensor<3>(torch::tensor({{1.0f, 2.0f, 3.0f}, {4.0f, 5.0f, 6.0f}}));
+    auto b = BatchTensor<3>(torch::tensor({{2.0f, 2.0f, 1.0f}, {4.0f, 6.0f, 5.0f}}));
+
+    EXPECT_TRUE(torch::equal(a.lt(b).t(), torch::tensor({{true, false, false}, {false, true, false}})));
+    EXPECT_TRUE(torch::equal((a < b).t(), torch::tensor({{true, false, false}, {false, true, false}})));
+    EXPECT_TRUE(torch::equal(a.lt(3.0f).t(), torch::tensor({{true, true, false}, {false, false, false}})));
+
+    EXPECT_TRUE(torch::equal(a.le(b).t(), torch::tensor({{true, true, false}, {true, true, false}})));
+    EXPECT_TRUE(torch::equal((a <= b).t(), torch::tensor({{true, true, false}, {true, true, false}})));
+
+    EXPECT_TRUE(torch::equal(a.gt(b).t(), torch::tensor({{false, false, true}, {false, false, true}})));
+    EXPECT_TRUE(torch::equal((a > b).t(), torch::tensor({{false, false, true}, {false, false, true}})));
+
+    EXPECT_TRUE(torch::equal(a.ge(b).t(), torch::tensor({{false, true, true}, {true, false, true}})));
+    EXPECT_TRUE(torch::equal((a >= b).t(), torch::tensor({{false, true, true}, {true, false, true}})));
 }
