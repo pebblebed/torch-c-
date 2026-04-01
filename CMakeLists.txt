@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.25 FATAL_ERROR)
 
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE BOOL
+    "Generate compile_commands.json for IDE tooling")
+
 # Auto-detect PyTorch cmake path if not provided via -DCMAKE_PREFIX_PATH
 execute_process(
     COMMAND python3 -c "import torch; print(torch.utils.cmake_prefix_path)"
