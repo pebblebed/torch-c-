@@ -15,11 +15,27 @@ project(
 # LibTorch ships CMake package-config files but no native Meson wrap or
 # pkg-config.  Meson's cmake dependency method bridges the gap.
 #
-# If torch is installed via pip (PyTorch), you may need:
-#   CMAKE_PREFIX_PATH="$(python3 -c 'import torch; print(torch.utils.cmake_prefix_path)')" \
-#       meson setup builddir
+# Auto-detect the cmake prefix path from a project-local .venv or the
+# ambient python3.  Falls back to whatever CMAKE_PREFIX_PATH is already set.
 # ---------------------------------------------------------------------------
-torch_dep = dependency('Torch', method : 'cmake')
+_venv_python = find_program(
+  meson.project_source_root() / '.venv' / 'bin' / 'python3',
+  'python3',
+)
+
+_torch_prefix = run_command(
+  _venv_python, '-c',
+  'import torch; print(torch.utils.cmake_prefix_path)',
+  check : false,
+)
+
+if _torch_prefix.returncode() == 0
+  _torch_cmake_dir = _torch_prefix.stdout().strip()
+  torch_dep = dependency('Torch', method : 'cmake',
+                         cmake_args : ['-DCMAKE_PREFIX_PATH=' + _torch_cmake_dir])
+else
+  torch_dep = dependency('Torch', method : 'cmake')
+endif
 
 # ---------------------------------------------------------------------------
 # trails — header-only declared dependency
