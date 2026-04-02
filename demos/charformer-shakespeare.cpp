@@ -12,6 +12,9 @@
 #include <filesystem>
 #include <cstdlib>
 #include <cstdio>
+#include <map>
+#include <set>
+#include <algorithm>
 
 #include <torch/torch.h>
 #include "charformer.hpp"
@@ -39,10 +42,88 @@ constexpr float  Temperature  = 0.8f;
 constexpr int    GenLength    = 500;
 constexpr int    LogEvery     = 10;
 
-static const std::string kDataDir  = "./data/tinyshakespeare";
-static const std::string kDataFile = kDataDir + "/input.txt";
-static const std::string kURL =
-    "https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt";
+struct DatasetSpec {
+    std::string hf_name;
+    std::string hf_config;
+    std::string split;
+    std::string text_field;
+    std::string local_dir;
+    std::string local_file;
+    std::string direct_url;
+    bool via_huggingface = false;
+};
+
+const std::set<std::string> kDatasets = {
+    "fineweb",
+    "openwebtext",
+    "shakespeare",
+    "tinystories",
+    "wikitext-103",
+    "wikitext-2",
+};
+
+const std::map<std::string, DatasetSpec> kDatasetSpecs = {
+    {"shakespeare", DatasetSpec{
+        .hf_name = "",
+        .hf_config = "",
+        .split = "",
+        .text_field = "",
+        .local_dir = "./data/shakespeare",
+        .local_file = "./data/shakespeare/input.txt",
+        .direct_url = "https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt",
+        .via_huggingface = false,
+    }},
+    {"wikitext-2", DatasetSpec{
+        .hf_name = "salesforce/wikitext",
+        .hf_config = "wikitext-2-raw-v1",
+        .split = "train",
+        .text_field = "text",
+        .local_dir = "./data/wikitext-2",
+        .local_file = "./data/wikitext-2/train.txt",
+        .direct_url = "",
+        .via_huggingface = true,
+    }},
+    {"wikitext-103", DatasetSpec{
+        .hf_name = "salesforce/wikitext",
+        .hf_config = "wikitext-103-raw-v1",
+        .split = "train",
+        .text_field = "text",
+        .local_dir = "./data/wikitext-103",
+        .local_file = "./data/wikitext-103/train.txt",
+        .direct_url = "",
+        .via_huggingface = true,
+    }},
+    {"openwebtext", DatasetSpec{
+        .hf_name = "Skylion007/openwebtext",
+        .hf_config = "",
+        .split = "train",
+        .text_field = "text",
+        .local_dir = "./data/openwebtext",
+        .local_file = "./data/openwebtext/train.txt",
+        .direct_url = "",
+        .via_huggingface = true,
+    }},
+    {"tinystories", DatasetSpec{
+        .hf_name = "roneneldan/TinyStories",
+        .hf_config = "",
+        .split = "train",
+        .text_field = "text",
+        .local_dir = "./data/tinystories",
+        .local_file = "./data/tinystories/train.txt",
+        .direct_url = "",
+        .via_huggingface = true,
+    }},
+    {"fineweb", DatasetSpec{
+        .hf_name = "HuggingFaceFW/fineweb-edu",
+        .hf_config = "sample-10BT",
+        .split = "train",
+        .text_field = "text",
+        .local_dir = "./data/fineweb",
+        .local_file = "./data/fineweb/train.txt",
+        .direct_url = "",
+        .via_huggingface = true,
+    }}
+};
 
 // ── Utilities ────────────────────────────────────────────────
 
@@ -63,20 +144,101 @@ std::string format_number(size_t n) {
 
 // ── Download ─────────────────────────────────────────────────
 
-void ensure_data() {
-    if (std::filesystem::exists(kDataFile)) {
-        auto sz = std::filesystem::file_size(kDataFile);
-        std::cout << "📥 TinyShakespeare already cached (" << format_number(sz) << " bytes)\n";
+std::string shell_quote(const std::string& s) {
+    std::string out = "'";
+    for (char c : s) {
+        if (c == '\'') out += "'\\''";
+        else out += c;
+    }
+    out += "'";
+    return out;
+}
+
+std::string join_strings(const std::set<std::string>& values, const std::string& sep = ", ") {
+    std::ostringstream ss;
+    bool first = true;
+    for (const auto& value : values) {
+        if (!first) ss << sep;
+        ss << value;
+        first = false;
+    }
+    return ss.str();
+}
+
+const DatasetSpec& get_dataset_spec(const std::string& dataset_name) {
+    auto it = kDatasetSpecs.find(dataset_name);
+    if (it == kDatasetSpecs.end()) {
+        throw std::runtime_error("Unknown dataset '" + dataset_name + "'");
+    }
+    return it->second;
+}
+
+void ensure_dataset_text_with_hf(const std::string& dataset_name, const DatasetSpec& spec) {
+    std::filesystem::create_directories(spec.local_dir);
+    std::cout << "📥 Downloading " << dataset_name << " from Hugging Face... " << std::flush;
+
+    std::string py =
+        "from datasets import load_dataset\n"
+        "from pathlib import Path\n"
+        "dataset_name = " + std::string("\"") + spec.hf_name + "\"\n" +
+        "config_name = " + (spec.hf_config.empty() ? std::string("None") : (std::string("\"") + spec.hf_config + "\"")) + "\n" +
+        "split_name = \"" + spec.split + "\"\n"
+        "text_field = \"" + spec.text_field + "\"\n"
+        "output_path = Path(\"" + spec.local_file + "\")\n"
+        "output_path.parent.mkdir(parents=True, exist_ok=True)\n"
+        "ds = load_dataset(dataset_name, config_name, split=split_name) if config_name is not None else load_dataset(dataset_name, split=split_name)\n"
+        "with output_path.open('w', encoding='utf-8') as f:\n"
+        "    for row in ds:\n"
+        "        text = row.get(text_field, '')\n"
+        "        if text:\n"
+        "            f.write(text)\n"
+        "            if not text.endswith('\\n'):\n"
+        "                f.write('\\n')\n";
+
+    auto script_path = spec.local_dir + "/download_hf_dataset.py";
+    {
+        std::ofstream script(script_path, std::ios::binary);
+        if (!script) throw std::runtime_error("Cannot write helper script " + script_path);
+        script << py;
+    }
+
+    std::string cmd = "python3 " + shell_quote(script_path);
+    if (std::system(cmd.c_str()) != 0) {
+        throw std::runtime_error(
+            "Hugging Face dataset download failed for '" + dataset_name +
+            "'. Install Python packages: datasets and pyarrow.");
+    }
+
+    auto sz = std::filesystem::file_size(spec.local_file);
+    std::cout << "done (" << format_number(sz) << " bytes)\n";
+}
+
+void ensure_dataset_data(const std::string& dataset_name) {
+    const auto& spec = get_dataset_spec(dataset_name);
+    if (std::filesystem::exists(spec.local_file)) {
+        auto sz = std::filesystem::file_size(spec.local_file);
+        std::cout << "📥 " << dataset_name << " already cached (" << format_number(sz) << " bytes)\n";
         return;
     }
-    std::cout << "📥 Downloading TinyShakespeare... " << std::flush;
-    std::filesystem::create_directories(kDataDir);
-    std::string cmd = "curl -sL -o " + kDataFile + " " + kURL;
-    if (std::system(cmd.c_str()) != 0) {
-        throw std::runtime_error("Download failed. Install curl or place input.txt manually.");
+
+    if (!spec.direct_url.empty()) {
+        std::cout << "📥 Downloading " << dataset_name << "... " << std::flush;
+        std::filesystem::create_directories(spec.local_dir);
+        std::string cmd = "curl -sL -o " + shell_quote(spec.local_file) + " " + shell_quote(spec.direct_url);
+        if (std::system(cmd.c_str()) != 0) {
+            throw std::runtime_error("Download failed for dataset '" + dataset_name + "'.");
+        }
+        auto sz = std::filesystem::file_size(spec.local_file);
+        std::cout << "done (" << format_number(sz) << " bytes)\n";
+        return;
     }
-    auto sz = std::filesystem::file_size(kDataFile);
-    std::cout << "done (" << format_number(sz) << " bytes)\n";
+
+    if (spec.via_huggingface) {
+        ensure_dataset_text_with_hf(dataset_name, spec);
+        return;
+    }
+
+    throw std::runtime_error("No download strategy configured for dataset '" + dataset_name + "'.");
 }
 
 // ── Batching ─────────────────────────────────────────────────
@@ -204,6 +366,7 @@ void print_usage(const char* prog) {
         "\n"
         "Options:\n"
         "  --model MODEL   Model type: transformer, rnn, gru, gpt2 (default: transformer)\n"
+        "  --dataset NAME  Dataset: fineweb, openwebtext, shakespeare, tinystories, wikitext-103, wikitext-2 (default: shakespeare)\n"
         "  --batchsize N   Training batch size (default: 16)\n"
         "  --epochs N      Number of training epochs (default: 3)\n"
         "  --help          Show this help message and exit\n",
@@ -214,6 +377,8 @@ int main(int argc, char* argv[]) {
     int batch_size = 16;
     int num_epochs = 3;
     std::string model_type = "transformer";
+    std::string dataset_name = "shakespeare";
+    const std::set<std::string> models = {"gpt2", "gru", "rnn", "transformer"};
 
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
@@ -226,8 +391,18 @@ int main(int argc, char* argv[]) {
                 return 1;
             }
             model_type = argv[++i];
-            if (model_type != "transformer" && model_type != "rnn" && model_type != "gru" && model_type != "gpt2") {
-                std::cerr << "Error: --model must be one of: transformer, rnn, gru, gpt2\n";
+            if (!models.contains(model_type)) {
+                std::cerr << "Error: --model must be one of: " << join_strings(models) << "\n";
+                return 1;
+            }
+        } else if (arg == "--dataset") {
+            if (i + 1 >= argc) {
+                std::cerr << "Error: --dataset requires a value\n";
+                return 1;
+            }
+            dataset_name = argv[++i];
+            if (!kDatasets.contains(dataset_name)) {
+                std::cerr << "Error: --dataset must be one of: " << join_strings(kDatasets) << "\n";
                 return 1;
             }
         } else if (arg == "--batchsize") {
@@ -263,16 +438,17 @@ int main(int argc, char* argv[]) {
               << "╚══════════════════════════════════════════╝\n\n";
 
     // 1. Download data
-    ensure_data();
-    std::string text = read_file(kDataFile);
-    std::cout << "📊 Dataset: " << format_number(text.size()) << " characters\n";
+    ensure_dataset_data(dataset_name);
+    const auto& dataset_spec = get_dataset_spec(dataset_name);
+    std::string text = read_file(dataset_spec.local_file);
+    std::cout << "📊 Dataset (" << dataset_name << "): " << format_number(text.size()) << " characters\n";
 
     // Common pipeline: create model, report params, train, generate
     auto run = [&](auto& model) {
         size_t n_params = 0;
         for (const auto& p : model.parameters()) n_params += p.numel();
         std::cout << "🧠 Model (" << model_type << "): " << format_number(n_params) << " parameters\n";
-        std::cout << "⚙️  Config: batch_size=" << batch_size << ", epochs=" << num_epochs << "\n";
+        std::cout << "⚙️  Config: dataset=" << dataset_name << ", batch_size=" << batch_size << ", epochs=" << num_epochs << "\n";
 
         train(model, text, batch_size, num_epochs);
 
