@@ -40,7 +40,9 @@ constexpr int GPT2NLayers  = 12;
 constexpr double LearningRate = 3e-4;
 constexpr float  Temperature  = 0.8f;
 constexpr int    GenLength    = 500;
+constexpr int    SubjectiveSampleLength = 256;
 constexpr int    LogEvery     = 10;
+constexpr auto   SubjectiveSampleInterval = std::chrono::seconds(30);
 
 struct DatasetSpec {
     std::string hf_name;
@@ -268,6 +270,27 @@ Batch random_batch(const std::string& text, int batch_size, std::mt19937& rng) {
 // ── Training ─────────────────────────────────────────────────
 
 template<typename Model>
+std::string sample_text(Model& model, const std::string& seed, int length, float temperature);
+
+template<typename Model>
+void emit_subjective_samples(Model& model) {
+    static const std::vector<std::string> prompts = {
+        "ROMEO: ",
+        "The capital of France is ",
+        "The history of all hitherto existing ",
+    };
+
+    std::cout << "\n🧪 Subjective inference samples\n";
+    std::cout << "────────────────────────────────────────────\n";
+    for (const auto& prompt : prompts) {
+        std::cout << prompt;
+        std::cout << sample_text(model, prompt, SubjectiveSampleLength, Temperature) << "\n";
+        std::cout << "────────────────────────────────────────────\n";
+    }
+    std::cout << std::flush;
+}
+
+template<typename Model>
 void train(Model& model, const std::string& text, int batch_size, int num_epochs) {
     size_t steps_per_epoch = text.size() / (batch_size * SeqLen);
     std::mt19937 rng(42);
@@ -279,6 +302,8 @@ void train(Model& model, const std::string& text, int batch_size, int num_epochs
 
     std::cout << "\n🏋️  Training (SeqLen=" << SeqLen << ", ModelDim=" << ModelDim
               << ", " << NLayers << " layers)\n";
+
+    auto last_subjective_sample_at = std::chrono::steady_clock::now();
 
     for (int epoch = 1; epoch <= num_epochs; epoch++) {
         auto t0 = std::chrono::steady_clock::now();
@@ -306,6 +331,12 @@ void train(Model& model, const std::string& text, int batch_size, int num_epochs
             if (step % LogEvery == 0) {
                 std::printf("    step %-4zu  loss: %.4f\n", step, lv);
             }
+
+            auto now = std::chrono::steady_clock::now();
+            if (now - last_subjective_sample_at >= SubjectiveSampleInterval) {
+                emit_subjective_samples(model);
+                last_subjective_sample_at = now;
+            }
         }
 
         auto t1 = std::chrono::steady_clock::now();
@@ -318,7 +349,7 @@ void train(Model& model, const std::string& text, int batch_size, int num_epochs
 // ── Text Generation ──────────────────────────────────────────
 
 template<typename Model>
-std::string generate(Model& model, const std::string& seed, int length, float temperature) {
+std::string sample_text(Model& model, const std::string& seed, int length, float temperature) {
     torch::NoGradGuard no_grad;
     std::string context = seed;
 
@@ -457,7 +488,7 @@ int main(int argc, char* argv[]) {
                   << ", seed=\"ROMEO:\")\n";
         std::cout << "────────────────────────────────────────────\n";
         std::cout << seed;
-        std::string generated = generate(model, seed, GenLength, Temperature);
+        std::string generated = sample_text(model, seed, GenLength, Temperature);
         std::cout << generated << "\n";
         std::cout << "────────────────────────────────────────────\n";
     };
