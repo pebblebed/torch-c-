@@ -396,4 +396,89 @@ public:
     }
 };
 
+/*
+ * GPT2Block: pre-norm causal transformer block in the GPT-2 style.
+ * Input/output: BatchTensor<SeqLen, ModelDim>
+ */
+template<int SeqLen, int NumHeads, int ModelDim, int FFDim>
+class GPT2Block : public torch::nn::Module {
+public:
+    using InputType = BatchTensor<SeqLen, ModelDim>;
+
+    std::shared_ptr<TokenLayerNorm<SeqLen, ModelDim>> ln1;
+    std::shared_ptr<trails::nn::MultiHeadAttention<NumHeads, ModelDim>> attn;
+    std::shared_ptr<TokenLayerNorm<SeqLen, ModelDim>> ln2;
+    std::shared_ptr<FeedForward<SeqLen, ModelDim, FFDim>> ff;
+
+    GPT2Block()
+    : ln1(std::make_shared<TokenLayerNorm<SeqLen, ModelDim>>())
+    , attn(std::make_shared<trails::nn::MultiHeadAttention<NumHeads, ModelDim>>())
+    , ln2(std::make_shared<TokenLayerNorm<SeqLen, ModelDim>>())
+    , ff(std::make_shared<FeedForward<SeqLen, ModelDim, FFDim>>())
+    {
+        register_module("ln1", ln1);
+        register_module("attn", attn);
+        register_module("ln2", ln2);
+        register_module("ff", ff);
+    }
+
+    auto& cuda() { if (torch::cuda::is_available()) this->to(torch::kCUDA); return *this; }
+    auto& mps() { if (torch::mps::is_available()) this->to(torch::kMPS); return *this; }
+
+    InputType forward(InputType x) {
+        auto attn_out = attn->template forward<SeqLen>(ln1->forward(x), /*causal=*/true);
+        auto h = x + attn_out;
+        auto ff_out = ff->forward(ln2->forward(h));
+        return h + ff_out;
+    }
+};
+
+/*
+ * CharGPT2: GPT-2-style decoder-only language model.
+ * Uses learned token embeddings, learned positional embeddings, pre-norm blocks,
+ * and a final layer norm before the LM head.
+ */
+template<int SeqLen, int VocabSize, int ModelDim, int NumHeads, int FFDim, int NLayers>
+class CharGPT2 : public torch::nn::Module {
+    using InputType = BatchTensor<SeqLen>;
+    using OutputType = BatchTensor<SeqLen, VocabSize>;
+
+    std::shared_ptr<trails::nn::Embedding<VocabSize, ModelDim>> tok_emb;
+    Tensor<SeqLen, ModelDim> pos_emb;
+    std::array<std::shared_ptr<GPT2Block<SeqLen, NumHeads, ModelDim, FFDim>>, NLayers> blocks;
+    std::shared_ptr<TokenLayerNorm<SeqLen, ModelDim>> ln_f;
+    Tensor<VocabSize, ModelDim> head_w;
+    Tensor<VocabSize> head_b;
+
+public:
+    CharGPT2()
+    : tok_emb(std::make_shared<trails::nn::Embedding<VocabSize, ModelDim>>())
+    , pos_emb(torch::nn::Module::register_parameter("pos_emb", Tensor<SeqLen, ModelDim>::randn().t()))
+    , ln_f(std::make_shared<TokenLayerNorm<SeqLen, ModelDim>>())
+    , head_w(torch::nn::Module::register_parameter("head_w", Tensor<VocabSize, ModelDim>::randn().t()))
+    , head_b(torch::nn::Module::register_parameter("head_b", Tensor<VocabSize>::randn().t()))
+    {
+        register_module("tok_emb", tok_emb);
+        register_module("ln_f", ln_f);
+        for (int i = 0; i < NLayers; i++) {
+            blocks[i] = std::make_shared<GPT2Block<SeqLen, NumHeads, ModelDim, FFDim>>();
+            register_module("block_" + std::to_string(i), blocks[i]);
+        }
+    }
+
+    auto& cuda() { if (torch::cuda::is_available()) this->to(torch::kCUDA); return *this; }
+    auto& mps() { if (torch::mps::is_available()) this->to(torch::kMPS); return *this; }
+
+    OutputType forward(InputType x) {
+        auto z = tok_emb->template forward<SeqLen>(x);
+        z = BatchTensor<SeqLen, ModelDim>(z.t() + pos_emb.t().unsqueeze(0).to(z.t().device()));
+        for (int i = 0; i < NLayers; i++) {
+            z = blocks[i]->forward(z);
+        }
+        auto h = ln_f->forward(z);
+        auto logits = trails::functional::linear(h, head_w, std::optional{head_b});
+        return logits.template log_softmax<1>();
+    }
+};
+
 }

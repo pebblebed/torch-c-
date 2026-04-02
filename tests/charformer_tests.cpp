@@ -315,6 +315,46 @@ TEST(CharformerTests, CharFormerStringForward) {
     EXPECT_TRUE(torch::all(y.t() <= 0.0f).item<bool>());
 }
 
+TEST(CharformerTests, CharGPT2Forward) {
+    torch::NoGradGuard no_grad;
+    constexpr int B = 2, SeqLen = 8, VocabSize = 256, ModelDim = 32, NumHeads = 2, FFDim = 128, NLayers = 2;
+    CharGPT2<SeqLen, VocabSize, ModelDim, NumHeads, FFDim, NLayers> model;
+    auto x = trails::BatchTensor<SeqLen>(torch::randint(0, VocabSize, {B, SeqLen}, torch::kLong));
+    auto y = model.forward(x);
+
+    EXPECT_EQ(y.t().dim(), 3);
+    EXPECT_EQ(y.batch_size(), B);
+    EXPECT_EQ(y.t().size(1), SeqLen);
+    EXPECT_EQ(y.t().size(2), VocabSize);
+    EXPECT_TRUE(torch::all(torch::isfinite(y.t())).item<bool>());
+    EXPECT_TRUE(torch::all(y.t() <= 0.0f).item<bool>());
+    auto probs = y.t().exp().sum(/*dim=*/-1);
+    auto max_err = (probs - 1.0f).abs().max().item<float>();
+    EXPECT_LT(max_err, 1e-4f);
+}
+
+TEST(CharformerTests, CharGPT2PrefixLogitsIgnoreFutureTokens) {
+    torch::NoGradGuard no_grad;
+    constexpr int SeqLen = 8;
+    constexpr int VocabSize = 256;
+    constexpr int ModelDim = 32;
+    constexpr int NumHeads = 2;
+    constexpr int FFDim = 128;
+    constexpr int NLayers = 2;
+
+    CharGPT2<SeqLen, VocabSize, ModelDim, NumHeads, FFDim, NLayers> model;
+    auto x1 = trails::BatchTensor<SeqLen>(torch::tensor({{1, 2, 3, 4, 5, 6, 7, 8}}, torch::kLong));
+    auto x2 = trails::BatchTensor<SeqLen>(torch::tensor({{1, 2, 3, 4, 42, 99, 17, 200}}, torch::kLong));
+    auto y1 = model.forward(x1);
+    auto y2 = model.forward(x2);
+
+    EXPECT_TRUE(torch::allclose(
+        y1.t().index({0, torch::indexing::Slice(0, 4), torch::indexing::Slice()}),
+        y2.t().index({0, torch::indexing::Slice(0, 4), torch::indexing::Slice()}),
+        1e-5,
+        1e-6));
+}
+
 TEST(CharformerTests, CharFormerPrefixLogitsIgnoreFutureTokens) {
     torch::NoGradGuard no_grad;
     constexpr int SeqLen = 8;

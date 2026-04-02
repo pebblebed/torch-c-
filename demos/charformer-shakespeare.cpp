@@ -28,6 +28,12 @@ constexpr int NumHeads  = 4;
 constexpr int FFDim     = 512;
 constexpr int NLayers   = 4;
 
+// Rough GPT-2-small-style proportions, scaled down for char-level TinyShakespeare.
+constexpr int GPT2ModelDim = 768;
+constexpr int GPT2NumHeads = 12;
+constexpr int GPT2FFDim    = 3072;
+constexpr int GPT2NLayers  = 12;
+
 constexpr double LearningRate = 3e-4;
 constexpr float  Temperature  = 0.8f;
 constexpr int    GenLength    = 500;
@@ -197,7 +203,7 @@ void print_usage(const char* prog) {
         "Train a character-level model on TinyShakespeare and generate text.\n"
         "\n"
         "Options:\n"
-        "  --model MODEL   Model type: transformer, rnn, gru (default: transformer)\n"
+        "  --model MODEL   Model type: transformer, rnn, gru, gpt2 (default: transformer)\n"
         "  --batchsize N   Training batch size (default: 16)\n"
         "  --epochs N      Number of training epochs (default: 3)\n"
         "  --help          Show this help message and exit\n",
@@ -220,8 +226,8 @@ int main(int argc, char* argv[]) {
                 return 1;
             }
             model_type = argv[++i];
-            if (model_type != "transformer" && model_type != "rnn" && model_type != "gru") {
-                std::cerr << "Error: --model must be one of: transformer, rnn, gru\n";
+            if (model_type != "transformer" && model_type != "rnn" && model_type != "gru" && model_type != "gpt2") {
+                std::cerr << "Error: --model must be one of: transformer, rnn, gru, gpt2\n";
                 return 1;
             }
         } else if (arg == "--batchsize") {
@@ -291,6 +297,10 @@ int main(int argc, char* argv[]) {
         run(model);
     } else if (model_type == "gru") {
         auto model = CharGRU<SeqLen, VocabSize, ModelDim, NLayers>();
+        move_to_best_available_device(model);
+        run(model);
+    } else if (model_type == "gpt2") {
+        auto model = CharGPT2<SeqLen, VocabSize, GPT2ModelDim, GPT2NumHeads, GPT2FFDim, GPT2NLayers>();
         move_to_best_available_device(model);
         run(model);
     }
