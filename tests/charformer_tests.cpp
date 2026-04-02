@@ -36,7 +36,7 @@ public:
 } // namespace
 
 TEST(RNNTest, InstantiationAndForward) {
-    RNN<kRnnBatch, kHidden, kEmbeddingDim, kDictionarySize, TestHiddenEncoder, TestDecoder> rnn;
+    trainium::RNN<kRnnBatch, kHidden, kEmbeddingDim, kDictionarySize, TestHiddenEncoder, TestDecoder> rnn;
     auto input = trails::Tensor<kRnnBatch, 1>(torch::tensor({{3}}, torch::kLong));
     auto hidden = trails::Tensor<kRnnBatch, kHidden>::zeroes();
     auto output = rnn.forward(input, hidden);
