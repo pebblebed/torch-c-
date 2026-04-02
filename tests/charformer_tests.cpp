@@ -3,9 +3,51 @@
 #include <cmath>
 
 #include "../charformer.hpp"
+#include "../charrnn.hpp"
 #include "trails/trails_nn.hpp"
 
 using namespace trainium;
+
+namespace {
+
+constexpr int kRnnBatch = 1;
+constexpr int kHidden = 8;
+constexpr int kEmbeddingDim = 4;
+constexpr int kDictionarySize = 16;
+
+class TestHiddenEncoder {
+public:
+    trails::Tensor<kRnnBatch, kHidden> forward(trails::Tensor<kRnnBatch, kEmbeddingDim> input) {
+        auto projected = torch::zeros({kRnnBatch, kHidden}, torch::kFloat32);
+        projected.index_put_({0, 0}, input.t().sum());
+        return {projected};
+    }
+};
+
+class TestDecoder {
+public:
+    trails::Tensor<kRnnBatch, kDictionarySize> forward(trails::Tensor<kRnnBatch, kHidden> hidden) {
+        auto logits = torch::zeros({kRnnBatch, kDictionarySize}, torch::kFloat32);
+        logits.index_put_({0, 0}, hidden.t().index({0, 0}));
+        return {logits};
+    }
+};
+
+} // namespace
+
+TEST(RNNTest, InstantiationAndForward) {
+    RNN<kRnnBatch, kHidden, kEmbeddingDim, kDictionarySize, TestHiddenEncoder, TestDecoder> rnn;
+    auto input = trails::Tensor<kRnnBatch, 1>(torch::tensor({{3}}, torch::kLong));
+    auto hidden = trails::Tensor<kRnnBatch, kHidden>::zeroes();
+    auto output = rnn.forward(input, hidden);
+
+    EXPECT_EQ(hidden.t().dim(), 2);
+    EXPECT_EQ(hidden.t().size(0), kRnnBatch);
+    EXPECT_EQ(hidden.t().size(1), kHidden);
+    EXPECT_EQ(output.t().dim(), 2);
+    EXPECT_EQ(output.t().size(0), kRnnBatch);
+    EXPECT_EQ(output.t().size(1), kDictionarySize);
+}
 
 TEST(CharformerTests, PosEncoding) {
     auto enc = positional_encoding(15, 128);
