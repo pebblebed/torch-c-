@@ -15,6 +15,39 @@ presence of `trails::nn` in `trails`-qua-`trails`.
 
 We are careful about warnings. We don't check them in if we can help it.
 
+## When writing code.
+
+We prefer early-exit, tree-shaped control flow patterns instead of
+diamonds.
+
+
+```
+    // Good! Happy!
+    if (weird_condition()) { return -1; }
+    auto x = ...;
+    auto y = ...;
+    return frob(x, y);
+```
+
+```
+    // Lame! Sad!
+    if (weird_condition()) {
+       retval = -1;
+    } else {
+        auto x = ...;
+        auto y = ...;
+        retval = frob(x, y);
+    }
+    return retval;
+```
+
+Most of all, we wish to *exercise our library*. The point of the library is
+to do a ton of compile-time checking by utilizing the trails::Tensor<>
+template, and the rest of the shape-safe trails machinery. "Fixing" things
+by falling back to runtime shapes (torch::Tensor, e.g.) makes this whole
+thing useless.
+
+
 ## Pre-checkin ritual
 
 1. *Does it build without warnings or errors*?

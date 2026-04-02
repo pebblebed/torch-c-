@@ -76,8 +76,8 @@ void ensure_data() {
 // ── Batching ─────────────────────────────────────────────────
 
 struct Batch {
-    torch::Tensor x;  // (BatchSize, SeqLen)
-    torch::Tensor y;  // (BatchSize, SeqLen)
+    BatchTensor<SeqLen> x;
+    BatchTensor<SeqLen> y;
 };
 
 Batch random_batch(const std::string& text, int batch_size, std::mt19937& rng) {
@@ -94,7 +94,7 @@ Batch random_batch(const std::string& text, int batch_size, std::mt19937& rng) {
     }
     auto xten = torch::tensor(xs, torch::kLong).reshape({batch_size, SeqLen});
     auto yten = torch::tensor(ys, torch::kLong).reshape({batch_size, SeqLen});
-    return {xten, yten};
+    return {BatchTensor<SeqLen>(xten), BatchTensor<SeqLen>(yten)};
 }
 
 // ── Training ─────────────────────────────────────────────────
@@ -121,15 +121,12 @@ void train(Model& model, const std::string& text, int batch_size, int num_epochs
 
         for (size_t s = 0; s < steps_per_epoch; s++) {
             auto batch = random_batch(text, batch_size, rng);
-            batch.x = batch.x.to(device);
-            batch.y = batch.y.to(device);
+            batch.x = BatchTensor<SeqLen>(batch.x.t().to(device));
+            batch.y = BatchTensor<SeqLen>(batch.y.t().to(device));
             optimizer.zero_grad();
 
-            // Forward pass: BatchTensor<SeqLen> -> BatchTensor<SeqLen, VocabSize>
-            auto input = BatchTensor<SeqLen>(batch.x);
-            auto logits = model.forward(input);
-
-            auto loss = language_model_loss(logits.t(), batch.y);
+            auto logits = model.forward(batch.x);
+            auto loss = language_model_loss(logits, batch.y);
 
             loss.backward();
             optimizer.step();

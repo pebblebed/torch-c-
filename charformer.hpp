@@ -14,18 +14,26 @@ namespace nn = torch::nn;
 using namespace trails;
 using namespace trails::nn;
 
-inline torch::Tensor language_model_loss(torch::Tensor log_probs, torch::Tensor target_ids) {
-    if (log_probs.dim() != 3) {
-        throw std::runtime_error("language_model_loss: expected log_probs with shape [B, SeqLen, Vocab]");
-    }
-    if (target_ids.dim() != 2) {
-        throw std::runtime_error("language_model_loss: expected target_ids with shape [B, SeqLen]");
-    }
-    if (log_probs.size(0) != target_ids.size(0) || log_probs.size(1) != target_ids.size(1)) {
-        throw std::runtime_error("language_model_loss: batch/sequence dimensions must match");
-    }
-    auto vocab_size = log_probs.size(2);
-    auto flat_log_probs = log_probs.reshape({-1, vocab_size});
+template<int SeqLen, int VocabSize>
+inline torch::Tensor language_model_loss(BatchTensor<SeqLen, VocabSize> log_probs,
+                                         BatchTensor<SeqLen> target_ids) {
+    auto flat_log_probs = log_probs.t().reshape({-1, VocabSize});
+    auto flat_targets = target_ids.t().reshape({-1});
+    return torch::nn::functional::nll_loss(flat_log_probs, flat_targets);
+}
+
+template<int B, int SeqLen, int VocabSize>
+inline torch::Tensor language_model_loss(Tensor<B, SeqLen, VocabSize> log_probs,
+                                         Tensor<B, SeqLen> target_ids) {
+    return language_model_loss(
+        BatchTensor<SeqLen, VocabSize>(log_probs),
+        BatchTensor<SeqLen>(target_ids));
+}
+
+template<int SeqLen, int VocabSize>
+inline torch::Tensor language_model_loss(Tensor<SeqLen, VocabSize> log_probs,
+                                         Tensor<SeqLen> target_ids) {
+    auto flat_log_probs = log_probs.t();
     auto flat_targets = target_ids.reshape({-1});
     return torch::nn::functional::nll_loss(flat_log_probs, flat_targets);
 }
@@ -140,25 +148,48 @@ public:
 };
 
 /*
- * TransformerEncoderLayer: MHA + residual + LayerNorm, then FF + residual + LayerNorm.
+ * TokenLayerNorm: normalize over ModelDim for each token independently.
+ * Input/output: BatchTensor<SeqLen, ModelDim>
+ */
+template<int SeqLen, int ModelDim>
+class TokenLayerNorm : public torch::nn::Module {
+    torch::nn::LayerNorm inner_;
+public:
+    using InputType = BatchTensor<SeqLen, ModelDim>;
+
+    TokenLayerNorm()
+    : inner_(torch::nn::LayerNorm(torch::nn::LayerNormOptions({ModelDim}))) {
+        register_module("layer_norm", inner_);
+    }
+
+    auto& cuda() { if (torch::cuda::is_available()) this->to(torch::kCUDA); return *this; }
+    auto& mps() { if (torch::mps::is_available()) this->to(torch::kMPS); return *this; }
+
+    InputType forward(const InputType& input) {
+        return InputType(inner_->forward(input.t()));
+    }
+};
+
+/*
+ * CausalTransformerLayer: causal MHA + residual + LayerNorm, then FF + residual + LayerNorm.
  * Batch-agnostic: works with any batch size at runtime.
  * Input/output: BatchTensor<SeqLen, ModelDim>
  */
 template<int SeqLen, int NumHeads, int ModelDim, int FFDim>
-class TransformerEncoderLayer : public torch::nn::Module {
+class CausalTransformerLayer : public torch::nn::Module {
 public:
     using InputType = BatchTensor<SeqLen, ModelDim>;
 
     std::shared_ptr<trails::nn::MultiHeadAttention<NumHeads, ModelDim>> mha;
-    std::shared_ptr<trails::nn::BatchLayerNorm<SeqLen, ModelDim>> ln1;
+    std::shared_ptr<TokenLayerNorm<SeqLen, ModelDim>> ln1;
     std::shared_ptr<FeedForward<SeqLen, ModelDim, FFDim>> ff;
-    std::shared_ptr<trails::nn::BatchLayerNorm<SeqLen, ModelDim>> ln2;
+    std::shared_ptr<TokenLayerNorm<SeqLen, ModelDim>> ln2;
 
-    TransformerEncoderLayer()
+    CausalTransformerLayer()
     : mha(std::make_shared<trails::nn::MultiHeadAttention<NumHeads, ModelDim>>())
-    , ln1(std::make_shared<trails::nn::BatchLayerNorm<SeqLen, ModelDim>>())
+    , ln1(std::make_shared<TokenLayerNorm<SeqLen, ModelDim>>())
     , ff(std::make_shared<FeedForward<SeqLen, ModelDim, FFDim>>())
-    , ln2(std::make_shared<trails::nn::BatchLayerNorm<SeqLen, ModelDim>>())
+    , ln2(std::make_shared<TokenLayerNorm<SeqLen, ModelDim>>())
     {
         register_module("mha", mha);
         register_module("ln1", ln1);
@@ -170,8 +201,8 @@ public:
     auto& mps() { if (torch::mps::is_available()) this->to(torch::kMPS); return *this; }
 
     InputType forward(InputType x) {
-        // Self-attention sublayer with residual + LayerNorm
-        auto attn_out = mha->template forward<SeqLen>(x);
+        // Causal self-attention keeps training aligned with autoregressive generation.
+        auto attn_out = mha->template forward<SeqLen>(x, /*causal=*/true);
         auto x1 = ln1->forward(attn_out + x);
         // Feedforward sublayer with residual + LayerNorm
         auto ff_out = ff->forward(x1);
@@ -222,7 +253,7 @@ torch::Tensor apply_positional_encoding(torch::Tensor x) {
 
 /*
  * CharFormer: character-level transformer language model.
- * Embedding + sinusoidal positional encoding + NLayers encoder layers + linear head + log_softmax.
+ * Embedding + sinusoidal positional encoding + NLayers causal transformer layers + linear head + log_softmax.
  * Batch-agnostic: works with any batch size at runtime.
  * Input: BatchTensor<SeqLen> of int64 indices -> Output: BatchTensor<SeqLen, VocabSize> log probabilities.
  */
@@ -232,7 +263,7 @@ class CharFormer : public torch::nn::Module {
     using OutputType = BatchTensor<SeqLen, VocabSize>;
 
     std::shared_ptr<trails::nn::Embedding<VocabSize, ModelDim>> emb;
-    std::array<std::shared_ptr<TransformerEncoderLayer<SeqLen, NumHeads, ModelDim, FFDim>>, NLayers> layers;
+    std::array<std::shared_ptr<CausalTransformerLayer<SeqLen, NumHeads, ModelDim, FFDim>>, NLayers> layers;
     Tensor<VocabSize, ModelDim> head_w;
     Tensor<VocabSize> head_b;
 
@@ -244,7 +275,7 @@ public:
     {
         register_module("emb", emb);
         for (int i = 0; i < NLayers; i++) {
-            layers[i] = std::make_shared<TransformerEncoderLayer<SeqLen, NumHeads, ModelDim, FFDim>>();
+            layers[i] = std::make_shared<CausalTransformerLayer<SeqLen, NumHeads, ModelDim, FFDim>>();
             register_module("layer_" + std::to_string(i), layers[i]);
         }
     }
@@ -261,7 +292,7 @@ public:
         auto pe = positional_encoding(SeqLen, ModelDim).to(z.t().device());
         z = BatchTensor<SeqLen, ModelDim>(z.t() + pe.unsqueeze(0));
 
-        // Encoder layers
+        // Causal transformer layers
         for (int i = 0; i < NLayers; i++) {
             z = layers[i]->forward(z);
         }

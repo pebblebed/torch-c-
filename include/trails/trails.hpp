@@ -791,6 +791,9 @@ struct BatchTensor {
     using seq_t = typename inner_t::seq_t;
     constexpr static size_t math_dim() { return sizeof...(Dims); }
 
+    template<int B>
+    BatchTensor(Tensor<B, Dims...> t) : t_(t.t()) {}
+
     // Construct from a dynamic torch::Tensor.
     // Validates that t.sizes()[1:] == {Dims...}; batch size is t.size(0).
     BatchTensor(torch::Tensor t) : t_(t) {
@@ -1554,12 +1557,13 @@ struct flatten_result {
     static constexpr int flat_dim = dim_product<StartDim, EndDim, Dims...>::value;
 
     template<size_t... Pre, size_t... Post>
-    static auto make(std::index_sequence<Pre...>, std::index_sequence<Post...>)
-        -> Tensor<arr[Pre]..., flat_dim, arr[EndDim + 1 + Post]...>;
+    static consteval auto make_type(std::index_sequence<Pre...>, std::index_sequence<Post...>) {
+        return std::type_identity<Tensor<arr[Pre]..., flat_dim, arr[EndDim + 1 + Post]...>>{};
+    }
 
-    using type = decltype(make(
+    using type = typename decltype(make_type(
         std::make_index_sequence<StartDim>{},
-        std::make_index_sequence<ndim - EndDim - 1>{}));
+        std::make_index_sequence<ndim - EndDim - 1>{}))::type;
 };
 
 } // namespace detail

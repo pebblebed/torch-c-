@@ -144,6 +144,30 @@ TEST(CharformerTests, MultiHeadAttention) {
     EXPECT_EQ(y.t().size(2), D);
 }
 
+TEST(CharformerTests, MultiHeadAttentionCausalPreventsFutureLeakage) {
+    torch::NoGradGuard no_grad;
+    constexpr int B = 1;
+    constexpr int L = 8;
+    constexpr int H = 2;
+    constexpr int D = 16;
+
+    trails::nn::MultiHeadAttention<H, D> mha;
+    auto x1 = trails::BatchTensor<L, D>(torch::randn({B, L, D}));
+    auto x2_t = x1.t().clone();
+    x2_t.index_put_({0, torch::indexing::Slice(4, torch::indexing::None), torch::indexing::Slice()},
+                    torch::randn({L - 4, D}));
+    auto x2 = trails::BatchTensor<L, D>(x2_t);
+
+    auto y1 = mha.forward<L>(x1, /*causal=*/true);
+    auto y2 = mha.forward<L>(x2, /*causal=*/true);
+
+    EXPECT_TRUE(torch::allclose(
+        y1.t().index({0, torch::indexing::Slice(0, 4), torch::indexing::Slice()}),
+        y2.t().index({0, torch::indexing::Slice(0, 4), torch::indexing::Slice()}),
+        1e-5,
+        1e-6));
+}
+
 
 // ============================================================
 // FeedForward tests
@@ -175,13 +199,13 @@ TEST(CharformerTests, FeedForwardOutputFinite) {
 }
 
 // ============================================================
-// TransformerEncoderLayer tests
+// CausalTransformerLayer tests
 // ============================================================
 
-TEST(CharformerTests, TransformerEncoderLayerShape) {
+TEST(CharformerTests, CausalTransformerLayerShape) {
     torch::NoGradGuard no_grad;
     constexpr int B = 2, SeqLen = 8, NumHeads = 2, ModelDim = 32, FFDim = 64;
-    TransformerEncoderLayer<SeqLen, NumHeads, ModelDim, FFDim> layer;
+    CausalTransformerLayer<SeqLen, NumHeads, ModelDim, FFDim> layer;
     auto x = trails::BatchTensor<SeqLen, ModelDim>(torch::randn({B, SeqLen, ModelDim}));
     auto y = layer.forward(x);
     EXPECT_EQ(y.t().dim(), 3);
@@ -190,10 +214,10 @@ TEST(CharformerTests, TransformerEncoderLayerShape) {
     EXPECT_EQ(y.t().size(2), ModelDim);
 }
 
-TEST(CharformerTests, TransformerEncoderLayerOutputFinite) {
+TEST(CharformerTests, CausalTransformerLayerOutputFinite) {
     torch::NoGradGuard no_grad;
     constexpr int B = 2, SeqLen = 8, NumHeads = 2, ModelDim = 32, FFDim = 64;
-    TransformerEncoderLayer<SeqLen, NumHeads, ModelDim, FFDim> layer;
+    CausalTransformerLayer<SeqLen, NumHeads, ModelDim, FFDim> layer;
     auto x = trails::BatchTensor<SeqLen, ModelDim>(torch::randn({B, SeqLen, ModelDim}));
     auto y = layer.forward(x);
     // Output should be finite (no NaN or Inf)
@@ -249,10 +273,36 @@ TEST(CharformerTests, CharFormerStringForward) {
     EXPECT_TRUE(torch::all(y.t() <= 0.0f).item<bool>());
 }
 
+TEST(CharformerTests, CharFormerPrefixLogitsIgnoreFutureTokens) {
+    torch::NoGradGuard no_grad;
+    constexpr int SeqLen = 8;
+    constexpr int VocabSize = 256;
+    constexpr int ModelDim = 32;
+    constexpr int NumHeads = 2;
+    constexpr int FFDim = 64;
+    constexpr int NLayers = 2;
+
+    CharFormer<SeqLen, VocabSize, ModelDim, NumHeads, FFDim, NLayers> model;
+
+    auto x1_t = torch::tensor({{1, 2, 3, 4, 5, 6, 7, 8}}, torch::kLong);
+    auto x2_t = torch::tensor({{1, 2, 3, 4, 42, 99, 17, 200}}, torch::kLong);
+    auto x1 = trails::BatchTensor<SeqLen>(x1_t);
+    auto x2 = trails::BatchTensor<SeqLen>(x2_t);
+
+    auto y1 = model.forward(x1);
+    auto y2 = model.forward(x2);
+
+    EXPECT_TRUE(torch::allclose(
+        y1.t().index({0, torch::indexing::Slice(0, 4), torch::indexing::Slice()}),
+        y2.t().index({0, torch::indexing::Slice(0, 4), torch::indexing::Slice()}),
+        1e-5,
+        1e-6));
+}
+
 // ============================================================
 // Wave 3, Task 6: Batch-agnostic CharFormer module tests
 // TODO: uncomment after Task 5 completes (BatchTensor-ize charformer.hpp)
-// These tests require FeedForward, TransformerEncoderLayer, and CharFormer
+// These tests require FeedForward, CausalTransformerLayer, and CharFormer
 // to accept BatchTensor inputs without a compile-time B parameter.
 // ============================================================
 
@@ -270,10 +320,10 @@ TEST(CharformerBatchTests, FeedForward_Batch) {
     EXPECT_TRUE(torch::all(torch::isfinite(output.t())).item<bool>());
 }
 
-TEST(CharformerBatchTests, TransformerEncoderLayer_Batch) {
+TEST(CharformerBatchTests, CausalTransformerLayer_Batch) {
     torch::NoGradGuard no_grad;
-    // TransformerEncoderLayer<SeqLen=8, NumHeads=2, ModelDim=32, FFDim=64> (no B!)
-    TransformerEncoderLayer<8, 2, 32, 64> layer;
+    // CausalTransformerLayer<SeqLen=8, NumHeads=2, ModelDim=32, FFDim=64> (no B!)
+    CausalTransformerLayer<8, 2, 32, 64> layer;
     auto input = trails::BatchTensor<8, 32>(torch::randn({3, 8, 32}));
     auto output = layer.forward(input);
     ASSERT_EQ(output.batch_size(), 3);
@@ -330,7 +380,9 @@ TEST(CharformerTests, LanguageModelLossMatchesNllGradientOnLogProbs) {
     auto input_a = log_probs.detach().clone().set_requires_grad(true);
     auto input_b = log_probs.detach().clone().set_requires_grad(true);
 
-    auto got = language_model_loss(input_a, labels);
+    auto got = language_model_loss(
+        trails::Tensor<B, SeqLen, Vocab>(input_a),
+        trails::Tensor<B, SeqLen>(labels));
     auto expected = torch::nn::functional::nll_loss(
         input_b.reshape({B * SeqLen, Vocab}),
         labels.reshape({B * SeqLen}));
@@ -343,6 +395,30 @@ TEST(CharformerTests, LanguageModelLossMatchesNllGradientOnLogProbs) {
         input_b.grad(),
         1e-6,
         1e-6));
+}
+
+TEST(CharformerTests, LanguageModelLossAcceptsStaticBatchTensorViaConversion) {
+    constexpr int B = 2;
+    constexpr int SeqLen = 5;
+    constexpr int Vocab = 13;
+
+    auto log_probs = trails::Tensor<B, SeqLen, Vocab>(
+        torch::log_softmax(torch::randn({B, SeqLen, Vocab}), /*dim=*/-1));
+    auto labels = trails::Tensor<B, SeqLen>(
+        torch::randint(0, Vocab, {B, SeqLen}, torch::kLong));
+
+    trails::BatchTensor<SeqLen, Vocab> batch_log_probs = log_probs;
+    trails::BatchTensor<SeqLen> batch_labels = labels;
+
+    auto got = language_model_loss(batch_log_probs, batch_labels);
+    auto expected = torch::nn::functional::nll_loss(
+        log_probs.t().reshape({B * SeqLen, Vocab}),
+        labels.t().reshape({B * SeqLen}));
+
+    EXPECT_TRUE(torch::allclose(got, expected, 1e-6, 1e-6));
+    EXPECT_EQ(batch_log_probs.batch_size(), B);
+    EXPECT_TRUE(torch::equal(batch_log_probs.t(), log_probs.t()));
+    EXPECT_TRUE(torch::equal(batch_labels.t(), labels.t()));
 }
 
 // ============================================================

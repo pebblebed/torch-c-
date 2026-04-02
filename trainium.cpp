@@ -46,8 +46,8 @@ int main(int argc, char** argv) {
     std::cerr << "Starting training..." << std::endl;
     size_t step = 0;
     for (auto& batch : *dataloader) {
-        auto data = batch.data;    // (B, SeqLen)
-        auto target = batch.target; // (B, SeqLen)
+        auto data = batch.data;      // (B, SeqLen)
+        auto target = batch.target;  // (B, SeqLen)
 
         // Skip incomplete batches
         if (data.size(0) != B) {
@@ -58,11 +58,10 @@ int main(int argc, char** argv) {
 
         // Forward pass: input BatchTensor<SeqLen> -> logits BatchTensor<SeqLen, VocabSize>
         auto input = BatchTensor<SeqLen>(data);
+        auto target_ids = BatchTensor<SeqLen>(target);
         auto logits = net.forward(input);
 
-        // Reshape for cross_entropy: flatten (batch, SeqLen, VocabSize) -> (batch*SeqLen, VocabSize)
-        auto batch_size = logits.batch_size();
-        auto loss = language_model_loss(logits.t(), target);
+        auto loss = language_model_loss(logits, target_ids);
         loss.backward();
         optimizer.step();
 

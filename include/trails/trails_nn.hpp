@@ -202,7 +202,8 @@ public:
     auto& mps() { this->to(torch::kMPS); return *this; }
 
     template<int SeqLen>
-    BatchTensor<SeqLen, ModelDim> forward(const BatchTensor<SeqLen, ModelDim>& input) {
+    BatchTensor<SeqLen, ModelDim> forward(const BatchTensor<SeqLen, ModelDim>& input,
+                                          bool causal = false) {
         auto x = input.t();  // (batch_size, SeqLen, ModelDim)
         auto batch_size = input.batch_size();
 
@@ -215,6 +216,12 @@ public:
         // Scaled dot-product attention on untyped tensors (runtime batch dim)
         const float scale = 1.0f / std::sqrt(static_cast<float>(HeadDim));
         auto scores = torch::matmul(q, k.transpose(-2, -1)) * scale;
+        if (causal) {
+            auto mask = torch::ones({SeqLen, SeqLen},
+                                    torch::TensorOptions().dtype(torch::kBool).device(scores.device()))
+                            .triu(1);
+            scores = scores.masked_fill(mask.unsqueeze(0).unsqueeze(0), -1e9);
+        }
         auto weights = torch::softmax(scores, /*dim=*/-1);
         auto attn_out = torch::matmul(weights, v);
         // attn_out: (batch_size, NumHeads, SeqLen, HeadDim)
